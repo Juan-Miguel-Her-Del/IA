@@ -47,7 +47,7 @@ def live_panel(service,detector,threshold,model_key):
     recognition=previous[1]
     def receive_frame():
         recognition.consume(st.session_state.get('browser_camera'),detector,service)
-    payload=camera_component(response=recognition.response,guide=CAMERA_GUIDE,interval_ms=250,key='browser_camera',
+    payload=camera_component(response=recognition.response,guide=CAMERA_GUIDE,interval_ms=120,key='browser_camera',
                              on_change=receive_frame,default=None)
     recognition.consume(payload,detector,service)
 

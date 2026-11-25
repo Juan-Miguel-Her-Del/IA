@@ -165,7 +165,7 @@ class RealModelAndUITests(unittest.TestCase):
         self.assertEqual(tuple(LABELS), self.service.classes)
         self.assertEqual(next(self.service.model.parameters()).device.type, "cpu")
         self.assertFalse(self.service.model.training)
-        expected_parameters={"VisionCNN-v1":89686,"VisionResidual-v2":2800678 if self.service.metadata["config"].get("pooling")=="avgmax" else 1240222}
+        expected_parameters={"VisionCNN-v1":89686,"VisionHybrid-v1":514190,"VisionResidual-v2":2800678 if self.service.metadata["config"].get("pooling")=="avgmax" else 1240222}
         self.assertEqual(self.service.parameter_count,expected_parameters[self.service.metadata["architecture"]])
         self.assertTrue(torch.equal(self.service.transform.mean[:, 0, 0], torch.tensor(self.service.metadata["config"]["normalization"]["mean"])))
         for path in self.photos:

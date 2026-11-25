@@ -1,6 +1,7 @@
 /* Follow the detector's box between replies by matching its image texture. */
 const BOX_MAX_AGE = 1100;
 const UNTRACKED_MAX_AGE = 650;
+const MAX_REPLY_AGE = 4000;
 
 function boxOverlap(a, b) {
   const area = box => (box[2] - box[0]) * (box[3] - box[1]);
@@ -90,4 +91,26 @@ class CameraBoxTrack {
     });
     return true;
   }
+}
+
+function trackFromReply(detection, request, now) {
+  if (!detection || !request.frame || now < request.sent || now-request.sent >= MAX_REPLY_AGE) return null;
+  const candidate = new CameraBoxTrack(detection, request.frame, request.sent);
+  if (candidate.template) {
+    const frames = request.frames || [];
+    for (const frame of frames) {
+      candidate.unmatchedFrames = candidate.follow(frame) ? 0 : candidate.unmatchedFrames+1;
+    }
+    // Refresh age only after visual verification on a recent browser frame.
+    // A late prediction by itself must never create a stale/ghost box.
+    if (frames.length) {
+      if (candidate.unmatchedFrames) return null;
+      candidate.observedAt = now;
+    }
+  }
+  return candidate.isFresh(now) ? candidate : null;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {CameraBoxTrack, trackFromReply, boxOverlap, BOX_MAX_AGE, MAX_REPLY_AGE};
 }

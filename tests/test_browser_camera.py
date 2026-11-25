@@ -49,7 +49,7 @@ class BrowserCameraTests(unittest.TestCase):
         self.assertEqual(classifier.calls,1)
         np.testing.assert_allclose(recognition.response['detection']['box'],[10/160,10/120,150/160,110/120])
 
-    def test_weak_live_box_requires_three_matches_and_stays_tracked_on_next_weak_reading(self):
+    def test_weak_box_is_previewed_immediately_but_requires_three_matches_for_classification(self):
         class WeakDetector:
             confidence=.25
 
@@ -64,15 +64,32 @@ class BrowserCameraTests(unittest.TestCase):
         classifier=FakeService()
         for sequence in (1,2):
             recognition.consume(payload(sequence=sequence),detector,classifier)
-            self.assertIsNone(recognition.response['detection'])
+            self.assertTrue(recognition.response['detection']['provisional'])
+            self.assertIsNone(recognition.response['detection']['material'])
             self.assertEqual(classifier.calls,0)
         recognition.consume(payload(sequence=3),detector,classifier)
         first=recognition.response['detection']
         self.assertIsNotNone(first)
+        self.assertFalse(first.get('provisional',False))
         self.assertEqual(detector.requested_confidence,.20)
         recognition.consume(payload(sequence=4),detector,classifier)
         self.assertEqual(recognition.response['detection']['track_id'],first['track_id'])
         self.assertEqual(classifier.calls,2)
+
+    def test_background_recovery_performs_only_one_zoom_per_frame(self):
+        class BackgroundWeak:
+            confidence=.27
+            calls=0
+            def detect(self,frame,confidence=None):
+                self.calls+=1
+                if frame.shape[:2]==(120,160):
+                    return [Detection((0,0,160,120),.9,Region((0,0,160,120),'background'))]
+                return [Detection((40,7,60,75),.21,Region((35,4,65,79),'central'))]
+        recognition=BrowserRecognition();detector=BackgroundWeak();classifier=FakeService()
+        recognition.consume(payload(),detector,classifier)
+        self.assertEqual(detector.calls,2)
+        self.assertTrue(recognition.response['detection']['provisional'])
+        self.assertEqual(classifier.calls,0)
 
     def test_zoom_requires_repeated_detection_and_maps_box_to_original_frame(self):
         recognition=BrowserRecognition()
@@ -87,14 +104,15 @@ class BrowserCameraTests(unittest.TestCase):
 
         detector=ZoomOnly()
         recognition.consume(payload(sequence=1),detector,classifier)
-        self.assertIsNone(recognition.response['detection'])
+        self.assertTrue(recognition.response['detection']['provisional'])
+        self.assertIsNone(recognition.response['detection']['material'])
         self.assertEqual(classifier.calls,0)
         recognition.consume(payload(sequence=2),detector,classifier)
         np.testing.assert_allclose(recognition.response['detection']['box'],
                                    [44/160,29/120,94/160,83/120])
         self.assertEqual(classifier.calls,1)
         recognition.consume(payload(sid='new-stream'),detector,classifier)
-        self.assertIsNone(recognition.response['detection'])
+        self.assertTrue(recognition.response['detection']['provisional'])
         self.assertEqual(classifier.calls,1)
 
     def test_zoom_does_not_accept_a_box_cut_by_the_crop_edge(self):

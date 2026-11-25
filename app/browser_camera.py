@@ -30,11 +30,21 @@ class BrowserRecognition:
         self.running=False
         self.pending_candidate=None
         self.zoom_retry_at=0
+        self.provisional=None
 
     def _detect_live(self, frame, detector):
+        self.provisional=None
         threshold=getattr(detector,'confidence',.25)
         minimum=min(threshold,CAMERA_CANDIDATE_CONFIDENCE)
         proposals=detector.detect(frame,confidence=minimum)
+        zoom=None
+        zoom_attempted=False
+        def center_once():
+            nonlocal zoom,zoom_attempted
+            if not zoom_attempted:
+                zoom=self._center_candidate(frame,detector,minimum)
+                zoom_attempted=True
+            return zoom
         height,width=frame.shape[:2]
         def fills_frame(item):
             x1,y1,x2,y2=item.box
@@ -47,7 +57,7 @@ class BrowserRecognition:
         obscures_guide=any(fills_frame(item) for item in proposals)
         if obscures_guide:
             proposals=[item for item in proposals if not fills_frame(item)]
-            zoom=self._center_candidate(frame,detector,minimum)
+            zoom=center_once()
             if zoom is not None:
                 proposals=[zoom]
         detections=[item for item in proposals if item.confidence>=threshold]
@@ -71,7 +81,7 @@ class BrowserRecognition:
 
         candidate=next((item for item in proposals if inside_guide(item)),None)
         if self.sequence>=self.zoom_retry_at:
-            zoom=self._center_candidate(frame,detector,minimum)
+            zoom=center_once()
             if zoom and (zoom.confidence>=threshold or candidate is None):
                 candidate=zoom
             if zoom is None:
@@ -80,6 +90,9 @@ class BrowserRecognition:
         if candidate is None:
             self.pending_candidate=None
             return []
+        # Show the actual D2 proposal immediately in amber. It is not a
+        # confirmed track/material and does not bypass classification voting.
+        self.provisional=candidate
         previous=self.pending_candidate
         readings=1
         if previous and self.sequence==previous[2]+1 and now-previous[1]<1.1:
@@ -144,6 +157,10 @@ class BrowserRecognition:
                     result={'label':label,'destination':info['destination'],
                             'organic':reading.material=='organicos'}
                 self.response['detection']={'box':box,'track_id':item.track_id,'material':result}
+            elif self.provisional is not None:
+                height,width=frame.shape[:2]
+                box=[float(v)/scale for v,scale in zip(self.provisional.box,[width,height,width,height])]
+                self.response['detection']={'box':box,'track_id':0,'material':None,'provisional':True}
         except Exception:
             self.objects=();self.tracker=ObjectTracker(live=True)
             self.pending_candidate=None;self.zoom_retry_at=0

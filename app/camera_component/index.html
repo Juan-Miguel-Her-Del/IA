@@ -6,6 +6,7 @@
 .controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
 button,select{font:inherit;border:1px solid #c9d9d2;border-radius:8px;padding:10px 14px;background:#fff;color:#183c36;min-height:42px}
 button{cursor:pointer}button.primary{background:#157e75;border-color:#157e75;color:white}button:disabled{opacity:.45;cursor:default}
+button[aria-pressed="true"]{background:#fff2c6;border-color:#d78c14}.flash-note{flex-basis:100%;font-size:13px;color:#55716a}.flash-note.error{color:#a82b29}
 select{flex:1;min-width:150px;max-width:100%}button:focus-visible,select:focus-visible{outline:3px solid #58a99e;outline-offset:2px}
 .stage{position:relative;aspect-ratio:4/3;background:#e8efeb;border-radius:12px;overflow:hidden;width:100%}
 video,canvas.overlay{display:block;width:100%;height:100%;position:absolute;inset:0;object-fit:contain}
@@ -26,7 +27,9 @@ video,canvas.overlay{display:block;width:100%;height:100%;position:absolute;inse
 <body>
 <div class="camera-layout"><div>
 <div class="controls"><button id="start" class="primary">Activar cámara</button><button id="stop" disabled>Detener</button>
-<select id="device" aria-label="Cámara"><option value="">Cámara automática</option></select></div>
+<button id="flash" type="button" aria-pressed="false" title="Activa la cámara para usar el flash." disabled>Encender flash</button>
+<select id="device" aria-label="Cámara"><option value="">Cámara automática</option></select>
+<span id="flash-note" class="flash-note" role="status" aria-live="polite" hidden></span></div>
 <div class="stage" id="stage"><video id="video" autoplay playsinline muted></video><canvas class="overlay" id="overlay"></canvas>
 <div class="empty" id="empty">Activa la cámara para reconocer un residuo.</div></div>
 <p id="notice" role="status" aria-live="polite"></p>
@@ -37,6 +40,7 @@ video,canvas.overlay{display:block;width:100%;height:100%;position:absolute;inse
   <p id="destination-row" class="destination" hidden><span id="bin" class="bin-dot"></span><span id="destination"></span></p>
 </div></div>
 <script src="box_tracking.js"></script>
+<script src="camera_flash.js"></script>
 <script>
 // Streamlit's public v1 component message protocol; no external scripts or services.
 const $=id=>document.getElementById(id);
@@ -45,8 +49,21 @@ const capture=document.createElement('canvas'),capturePen=capture.getContext('2d
 const motion=document.createElement('canvas'),motionPen=motion.getContext('2d',{willReadFrequently:true});
 let media=null,streamId='',sequence=0,pending=null,lastSent=0,opening=false,height=0;
 let track=null,displayBox=null,videoTime=-1,lastMotion=0,resultKey='';
-let enabled=true,interval=250;
+let enabled=true,interval=120;
 let guideBox=[.16,.10,.84,.90];
+const cameraFlash=new CameraFlash(renderFlash);
+function renderFlash(state) {
+  const active=Boolean(media&&!opening);
+  $('flash').disabled=!active||!enabled||!state.available||state.busy;
+  $('flash').textContent=state.busy?'Cambiando flash…':(state.enabled?'Apagar flash':'Encender flash');
+  $('flash').setAttribute('aria-pressed',String(state.enabled));
+  $('flash').title=!active?'Activa la cámara para usar el flash.':
+    (state.error||(!state.available?'Flash no disponible en esta cámara.':(state.enabled?'Apagar el flash.':'Iluminar el residuo.')));
+  const message=active?(state.error||(!state.available?'Flash no disponible en esta cámara.':'')):'';
+  $('flash-note').textContent=message;$('flash-note').hidden=!message;
+  $('flash-note').className=state.error?'flash-note error':'flash-note';
+  resize();
+}
 function post(type,details){window.parent.postMessage({isStreamlitMessage:true,type,...details},'*');}
 function send(value){post('streamlit:setComponentValue',{value,dataType:'json'});}
 function resize(){const value=Math.ceil(document.body.scrollHeight);if(value!==height){height=value;post('streamlit:setFrameHeight',{height:value});}}
@@ -73,7 +90,7 @@ function clearTrack() {
   track=null;
   displayBox=null;
 }
-function buttons(){$('start').disabled=!!media||opening||!enabled;$('stop').disabled=!media&&!opening;}
+function buttons(){$('start').disabled=!!media||opening||!enabled;$('stop').disabled=!media&&!opening;renderFlash(cameraFlash.state());}
 async function devices(){
   if(!navigator.mediaDevices?.enumerateDevices)return;
   const selected=$('device').value,list=await navigator.mediaDevices.enumerateDevices();
@@ -83,6 +100,7 @@ async function devices(){
 }
 function stop(report=true){
   const previous=streamId;
+  cameraFlash.detach();
   if(media)media.getTracks().forEach(track=>track.stop());
   media=null;video.srcObject=null;pending=null;opening=false;videoTime=-1;lastMotion=0;
   clearTrack();showMaterial();
@@ -100,8 +118,9 @@ async function start(){
     if(selected)constraints.deviceId={exact:selected};else constraints.facingMode={ideal:'environment'};
     const acquired=await navigator.mediaDevices.getUserMedia({video:constraints,audio:false});
     if(!opening){acquired.getTracks().forEach(track=>track.stop());return;}
-    media=acquired;streamId=crypto.randomUUID();sequence=0;pending=null;lastSent=0;
-    video.srcObject=media;await video.play();opening=false;$('empty').hidden=true;buttons();notice('');
+    media=acquired;streamId=crypto.randomUUID();sequence=0;pending=null;lastSent=-Infinity;
+    video.srcObject=media;await video.play();opening=false;$('empty').hidden=true;
+    cameraFlash.attach(media.getVideoTracks()[0]);buttons();notice('');
     $('stage').style.aspectRatio=`${video.videoWidth}/${video.videoHeight}`;
     await devices();resize();
   }catch(error){
@@ -122,21 +141,12 @@ function motionFrame() {
 }
 
 function applyDetection(detection, request, now) {
-  const age=now-request.sent;
-  if(age>=BOX_MAX_AGE || !request.frame)return;
   if(!detection) {
     if(track && ++track.misses>=2)clearTrack();
     return;
   }
-  const candidate=new CameraBoxTrack(detection,request.frame,request.sent);
-  if(!candidate.isFresh(now))return;
-  if(candidate.template) {
-    for(const frame of request.frames) {
-      candidate.unmatchedFrames=candidate.follow(frame)?0:candidate.unmatchedFrames+1;
-    }
-    // Use the newest visible frame to verify a delayed reply, even if intermediate frames failed.
-    if(candidate.unmatchedFrames)return;
-  }
+  const candidate=trackFromReply(detection,request,now);
+  if(!candidate)return;
   const sameObject=track?.detection.track_id===detection.track_id && displayBox &&
     boxOverlap(displayBox,candidate.box)>=.3;
   if(sameObject)candidate.startedAt=track.startedAt;
@@ -161,7 +171,10 @@ function tick(now){
       videoTime=video.currentTime;
       lastMotion=now;
       const currentFrame=motionFrame();
-      if(pending?.frame && now-pending.sent<BOX_MAX_AGE)pending.frames.push(currentFrame);
+      if(pending?.frame) {
+        pending.frames.push(currentFrame);
+        if(pending.frames.length>12)pending.frames.shift();
+      }
       if(track?.template) {
         track.unmatchedFrames=track.follow(currentFrame)?0:track.unmatchedFrames+1;
         if(track.unmatchedFrames>=2)clearTrack();
@@ -200,7 +213,7 @@ function tick(now){
 }
 window.addEventListener('message',event=>{
   if(event.source!==window.parent||event.data?.type!=='streamlit:render')return;
-  const args=event.data.args||{};enabled=!event.data.disabled;interval=Math.max(200,args.interval_ms||250);
+  const args=event.data.args||{};enabled=!event.data.disabled;interval=Math.max(80,args.interval_ms||120);
   if(Array.isArray(args.guide) && args.guide.length===4)guideBox=args.guide;
   const reply=args.response;
   if(reply&&reply.stream_id===streamId&&pending&&reply.sequence===pending.sequence){
@@ -213,6 +226,7 @@ window.addEventListener('message',event=>{
   buttons();resize();
 });
 $('start').addEventListener('click',start);$('stop').addEventListener('click',()=>stop());
+$('flash').addEventListener('click',()=>cameraFlash.toggle());
 $('device').addEventListener('change',async()=>{if(media){stop();await start();}});
 window.addEventListener('pagehide',()=>stop(false));window.addEventListener('beforeunload',()=>stop(false));
 new ResizeObserver(resize).observe(document.body);
