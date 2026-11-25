@@ -91,7 +91,7 @@ def save_checkpoint(path, model, config, epoch, val_macro_f1, manifest_sha256):
 
 
 def load_checkpoint(path, device="cpu"):
-    # Se carga un checkpoint propio explicito, nunca al construir VisionCNN.
+    """Restaura la arquitectura, sus pesos y el contrato de entrada y salida."""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"No se encontro el checkpoint: {path}. Copie best_model.pth a models/ o indique --checkpoint RUTA.")
@@ -109,6 +109,7 @@ def load_checkpoint(path, device="cpu"):
         raise ValueError(f"Orden de clases incompatible. Esperado: {list(CLASSES)}; checkpoint: {checkpoint['classes']}. No se reasignan etiquetas automaticamente.")
     if "class_to_idx" in checkpoint and checkpoint["class_to_idx"] != {c: i for i, c in enumerate(CLASSES)}:
         raise ValueError("class_to_idx no coincide con el orden original del checkpoint.")
+    # El orden de etiquetas y las estadísticas RGB deben coincidir con el entrenamiento.
     config = checkpoint["config"]
     if not isinstance(config, dict) or config.get("image_size") != image_size or "normalization" not in config:
         raise ValueError("El checkpoint no conserva la configuracion de entrada original.")
@@ -126,6 +127,7 @@ def load_checkpoint(path, device="cpu"):
     dropout = config.get("dropout")
     if not isinstance(dropout, (int, float)) or not math.isfinite(dropout) or not 0 <= dropout < 1:
         raise ValueError("Dropout del checkpoint invalido.")
+    # Primero se reconstruyen las capas. strict=True exige todos los pesos esperados.
     if architecture == "VisionHybrid-v1":
         from training.hybrid import build_hybrid
         model = build_hybrid(config)

@@ -1,4 +1,4 @@
-"""Comparación CNN/híbrido sobre COCO nuevo; pesos fuera del dataset, sin reportes dentro."""
+"""Entrena y evalúa los clasificadores propios sobre muestras aprobadas de COCO."""
 from collections import Counter
 import hashlib
 from itertools import islice
@@ -20,6 +20,7 @@ from utils.config import CLASSES
 
 
 def validate_config(config):
+    """Comprueba la configuración antes de cargar las muestras y crear el modelo."""
     if config.get('initialization') != 'random_from_scratch' or config.get('test_used') is not False:
         raise ValueError('Se requiere inicialización aleatoria y test reservado.')
     for key in ('epochs', 'batch_size', 'early_stopping_patience', 'minimum_epochs'):
@@ -37,9 +38,11 @@ def validate_config(config):
 
 
 def prepare_data(config):
+    """Prepara train y val con las seis clases y guarda una huella de las muestras."""
     root = Path(config['dataset_dir']).expanduser().resolve()
     train_rows, train_stats = collect_material_rows(root, 'train', config)
     val_rows, val_stats = collect_material_rows(root, 'val', config)
+    # Agrupar por foto original evita medir variantes de la misma imagen en dos particiones.
     train_rows, val_rows, reservations, test_groups = reserve_partitions(root, train_rows, val_rows)
     assert_disjoint(train_rows, val_rows)
     for rows, stats in ((train_rows, train_stats), (val_rows, val_stats)):
@@ -60,11 +63,13 @@ def prepare_data(config):
 
 def run_epoch(model, loader, device, optimizer=None, scaler=None, config=None, verify_updates=False,
               max_batches=None):
+    """Procesa una época y devuelve pérdida, métricas por clase y pasos de optimización."""
     training = optimizer is not None
     model.train(training)
     matrix = torch.zeros((6, 6), dtype=torch.long)
     total_loss, samples, steps, skipped = 0., 0, 0, 0
     original = [p.detach().clone() for p in model.parameters()] if training and verify_updates else []
+    # Entropía cruzada compara los seis logits con el índice correcto de material.
     criterion = nn.CrossEntropyLoss(label_smoothing=config['label_smoothing'] if training else 0.)
     amp = device.type == 'cuda'
     with torch.set_grad_enabled(training):
@@ -79,6 +84,7 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, config=None, v
             if not torch.isfinite(loss):
                 raise RuntimeError('Pérdida no finita; no guardar este modelo.')
             if training:
+                # En CUDA, GradScaler escala la pérdida y puede omitir un paso no finito.
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
                 norm = nn.utils.clip_grad_norm_(model.parameters(), config['gradient_clip'])
@@ -92,6 +98,7 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, config=None, v
                 else:
                     skipped += 1
             prediction = logits.detach().argmax(1)
+            # Fila = material real, columna = predicción. La diagonal contiene los aciertos.
             matrix += torch.bincount((labels*6+prediction).cpu(), minlength=36).reshape(6, 6)
             total_loss += float(loss.detach())*len(labels)
             samples += len(labels)
@@ -103,6 +110,7 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, config=None, v
     tp = matrix.diag().double()
     recall = tp/matrix.sum(1).clamp_min(1)
     precision = tp/matrix.sum(0).clamp_min(1)
+    # Macro-F1 da el mismo peso a las seis clases, aunque sus frecuencias sean distintas.
     f1 = 2*precision*recall/(precision+recall).clamp_min(1e-12)
     return {'loss': total_loss/samples, 'accuracy': float(tp.sum()/samples),
             'macro_f1': float(f1.mean()), 'per_class_recall': dict(zip(CLASSES, recall.tolist())),
@@ -112,12 +120,14 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, config=None, v
 
 
 def atomic_save(path, payload):
+    """Escribe el checkpoint completo en un temporal antes de reemplazar el anterior."""
     temporary = path.with_name(path.name+'.tmp')
     torch.save(payload, temporary)
     temporary.replace(path)
 
 
 def _rng_state(generator, device):
+    """Captura los generadores usados por el muestreo, las aumentaciones y las capas."""
     state = np.random.get_state()
     return {'torch': torch.get_rng_state(), 'python': random.getstate(), 'loader': generator.get_state(),
             'numpy': (state[0], state[1].tolist(), *state[2:]),
@@ -125,6 +135,7 @@ def _rng_state(generator, device):
 
 
 def _restore_rng(state, generator, device):
+    """Continúa la secuencia aleatoria guardada al cerrar la última época."""
     torch.set_rng_state(state['torch'])
     random.setstate(state['python'])
     generator.set_state(state['loader'])
@@ -135,6 +146,7 @@ def _restore_rng(state, generator, device):
 
 
 def train_intake(config, output=None, device_name='cuda', smoke=False, resume=False):
+    """Entrena un clasificador y guarda el mejor modelo según Macro-F1 de validación."""
     validate_config(config)
     root, train_rows, val_rows, provenance = prepare_data(config)
     if not smoke and output is None:
@@ -153,6 +165,7 @@ def train_intake(config, output=None, device_name='cuda', smoke=False, resume=Fa
     train_set = IntakeMaterialDataset(train_rows, config, training=True)
     val_set = IntakeMaterialDataset(val_rows, config)
     counts = Counter(r['label'] for r in train_rows)
+    # Aumenta la probabilidad de muestreo de las clases menos frecuentes.
     sampler = WeightedRandomSampler([1/counts[r['label']] for r in train_rows],
                                     len(train_rows), replacement=True, generator=generator)
     train_loader = DataLoader(train_set, batch_size=config['batch_size'], sampler=sampler,
@@ -161,6 +174,7 @@ def train_intake(config, output=None, device_name='cuda', smoke=False, resume=Fa
     model = build_material_model(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
     def schedule(index):
+        # Empieza con una tasa baja y luego la reduce con una curva coseno.
         warmup = config['warmup_epochs']
         if index < warmup:
             return (index+1)/max(1, warmup)
@@ -169,6 +183,7 @@ def train_intake(config, output=None, device_name='cuda', smoke=False, resume=Fa
     scaler = torch.amp.GradScaler('cuda', enabled=device.type == 'cuda', init_scale=config['amp_initial_scale'])
     history, best, best_epoch, bad_epochs, start = [], -1., 0, 0, 1
     if resume:
+        # Reanuda con el mismo modelo, datos, optimizador y secuencias aleatorias.
         state = torch.load(output/'last_training.pth', map_location='cpu', weights_only=True)
         if (state['config'] != config or state['manifest_sha256'] != provenance['manifest_sha256'] or
                 state['classes'] != list(CLASSES)):
@@ -185,6 +200,7 @@ def train_intake(config, output=None, device_name='cuda', smoke=False, resume=Fa
     print(json.dumps({'architecture': config['architecture'], 'parameters': sum(p.numel() for p in model.parameters()),
                       'device': str(device), 'data': provenance, 'smoke': smoke}), flush=True)
     if smoke:
+        # Comprueba una actualización real y una pasada de validación en dos lotes.
         result = run_epoch(model, train_loader, device, optimizer, scaler, config, verify_updates=True, max_batches=2)
         result['validation'] = run_epoch(model, val_loader, device, config=config, max_batches=2)
         result.update(smoke_test=True, checkpoints_written=0, test_used=False)
@@ -198,6 +214,7 @@ def train_intake(config, output=None, device_name='cuda', smoke=False, resume=Fa
         row = {'epoch': epoch, 'train': train_values, 'val': val_values,
                'seconds': time.monotonic()-tick, 'learning_rate': optimizer.param_groups[0]['lr']}
         history.append(row)
+        # best_model sirve para inferencia. last_training conserva lo necesario para reanudar.
         if val_values['macro_f1'] > best:
             best, best_epoch, bad_epochs = val_values['macro_f1'], epoch, 0
             atomic_save(output/'best_model.pth', {'format_version': 3, 'architecture': config['architecture'],

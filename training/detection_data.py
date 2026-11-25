@@ -14,12 +14,14 @@ from training.detector_own import STRIDES, make_targets
 
 
 def letterbox(rgb,size,boxes=None,training=False,config=None):
+    """Encaja la imagen en un cuadrado, conservando sus proporciones."""
     config=config or {}
     height,width=rgb.shape[:2]
     scale=min(size/width,size/height)
     if training:scale*=random.uniform(*config.get('scale_range',[.65,1.25]))
     nw,nh=max(1,round(width*scale)),max(1,round(height*scale))
     if training:
+        # En entrenamiento se varía dónde cae el objeto. En inferencia se centra.
         left=random.randint(min(0,size-nw),max(0,size-nw))
         top=random.randint(min(0,size-nh),max(0,size-nh))
     else:left,top=(size-nw)//2,(size-nh)//2
@@ -29,6 +31,7 @@ def letterbox(rgb,size,boxes=None,training=False,config=None):
     canvas[y1:y2,x1:x2]=scaled[y1-top:y2-top,x1-left:x2-left]
     transformed=None
     if boxes is not None:
+        # Aplica la misma escala y desplazamiento a las cajas que a los píxeles.
         transformed=np.asarray(boxes,dtype=np.float32).reshape(-1,4).copy()
         transformed[:,[0,2]]=transformed[:,[0,2]]*(nw/width)+left
         transformed[:,[1,3]]=transformed[:,[1,3]]*(nh/height)+top
@@ -44,10 +47,12 @@ def letterbox(rgb,size,boxes=None,training=False,config=None):
                 amount=config.get(key,.25)
                 image=enhancer(image).enhance(random.uniform(1-amount,1+amount))
             canvas=np.asarray(image).copy()
+    # Las escalas efectivas incluyen el redondeo. Sirven para invertir la transformación.
     return canvas,transformed,(nw/width,nh/height,left,top)
 
 
 def image_tensor(rgb):
+    """Cambia de alto × ancho × RGB a RGB × alto × ancho y escala a [-1, 1]."""
     return torch.from_numpy(rgb.transpose(2,0,1).copy()).float()/127.5-1.
 
 
@@ -147,9 +152,11 @@ class DetectionDataset(Dataset):
 
 
 def collate_detection(batch):
+    """Apila imágenes del mismo tamaño y conserva el número variable de cajas."""
     images=torch.stack([b[0] for b in batch])
     boxes=[b[1] for b in batch]
     size=images.shape[-1]
     shapes=[torch.empty((len(batch),6,size//s,size//s)) for s in STRIDES]
+    # Las formas de los mapas bastan para asignar sus celdas objetivo antes del forward.
     targets,collisions=make_targets(shapes,boxes)
     return images,boxes,[b[2] for b in batch],targets,collisions

@@ -1,4 +1,4 @@
-"""Localizador VisionLocaliza-D2, NMS y recortes para las CNN existentes."""
+"""Adapta VisionLocaliza-D2 a fotos y fotogramas y envía el recorte al clasificador."""
 from dataclasses import dataclass
 from pathlib import Path
 import threading
@@ -16,6 +16,8 @@ from training.detection_metrics import box_iou, fuse_detection_views, nms
 
 @dataclass(frozen=True)
 class Detection:
+    """Conserva la caja que se dibuja y la región ampliada que se clasifica."""
+
     box: tuple
     confidence: float
     region: Region
@@ -23,10 +25,12 @@ class Detection:
 
 
 def crop_box(box,width,height,margin=.12,*,square=True):
+    """Agrega contexto alrededor del objeto y ajusta el recorte a la imagen."""
     x1,y1,x2,y2=box
     dx,dy=max((x2-x1)*margin,(16-(x2-x1))/2),max((y2-y1)*margin,(16-(y2-y1))/2)
     expanded=(max(0,int(np.floor(x1-dx))),max(0,int(np.floor(y1-dy))),
               min(width,int(np.ceil(x2+dx))),min(height,int(np.ceil(y2+dy))))
+    # Si un borde recorta el margen, se desplaza la región para dar espacio al mínimo de 16 px.
     if expanded[2]-expanded[0]<16 or expanded[3]-expanded[1]<16:
         left=min(max(0,expanded[0]),width-16)
         top=min(max(0,expanded[1]),height-16)
@@ -35,6 +39,8 @@ def crop_box(box,width,height,margin=.12,*,square=True):
 
 
 class NeuralDetector:
+    """Carga los pesos del D2 y devuelve propuestas en coordenadas de la imagen original."""
+
     def __init__(self,checkpoint,cpu_threads=2,confidence=.35,nms_iou=.45,views=()):
         path=Path(checkpoint)
         if not path.is_file():
@@ -43,6 +49,7 @@ class NeuralDetector:
         from utils.dataset import sha256
         self.checkpoint_sha256=sha256(path)
         provenance=payload.get('provenance',{})
+        # Comprueba que el archivo corresponde a la arquitectura y procedencia esperadas.
         if provenance.get('pretrained') is not False or provenance.get('initialization')!='random':
             raise ValueError('Detector sin procedencia de entrenamiento desde cero.')
         if payload.get('architecture')!=ARCHITECTURE or provenance.get('official_detector_components') is not False:
@@ -63,7 +70,8 @@ class NeuralDetector:
         self._lock=threading.Lock()
 
     def detect(self,rgb,confidence=None):
-        # Streamlit may invoke a cached model from a new script/callback thread.
+        """Aplica el umbral de detección y prepara una región por caja aceptada."""
+        # Streamlit puede llamar al modelo compartido desde distintos hilos.
         threads=getattr(self,'cpu_threads',2)
         if torch.get_num_threads()!=threads:torch.set_num_threads(threads)
         if not isinstance(rgb,np.ndarray) or rgb.dtype!=np.uint8 or rgb.ndim!=3 or rgb.shape[2]!=3:
@@ -72,6 +80,8 @@ class NeuralDetector:
         height,width=rgb.shape[:2]
         threshold=self.confidence if confidence is None else confidence
         views=getattr(self,'views',())
+        # Si se configuran varias vistas, sus cajas se combinan en el espacio original.
+        # Con vistas vacías, basta una pasada a la resolución guardada en el checkpoint.
         if views:
             predictions=fuse_detection_views([self._detect_view(rgb,size,flip,.001) for size,flip in views],
                                              final_nms=self.nms_iou,min_confidence=threshold)
@@ -83,30 +93,35 @@ class NeuralDetector:
                 for p in predictions]
 
     def _detect_view(self,rgb,size,flip,confidence):
+        """Ejecuta una vista y deshace el escalado y el relleno del detector."""
         height,width=rgb.shape[:2]
         canvas,_,(scale_x,scale_y,left,top)=letterbox(rgb,size)
         if flip:
-            # Mirror the resized image, keeping the letterbox offsets and avoiding a full-frame copy.
+            # Refleja la imagen útil dentro del lienzo y conserva el relleno.
             width_scaled=round(width*scale_x)
             picture=canvas[:,left:left+width_scaled]
             picture[:]=picture[:,::-1].copy()
         tensor=image_tensor(canvas).unsqueeze(0)
+        # El lote contiene una imagen. El bloqueo protege el modelo compartido.
         with self._lock,torch.inference_mode():
             raw=self.model(tensor)
             decoded=decode_predictions(raw,confidence)[0]
             boxes,scores=decoded[0].cpu().numpy(),decoded[1].cpu().numpy()
         if len(scores)==0:
             return []
+        # Resta el relleno antes de dividir por la escala de cada eje.
         boxes[:,[0,2]]=(boxes[:,[0,2]]-left)/scale_x
         boxes[:,[1,3]]=(boxes[:,[1,3]]-top)/scale_y
         boxes[:,[0,2]]=np.clip(boxes[:,[0,2]],0,width)
         boxes[:,[1,3]]=np.clip(boxes[:,[1,3]],0,height)
         valid=np.isfinite(boxes).all(axis=1)&np.isfinite(scores)&((boxes[:,2]-boxes[:,0])>=2)&((boxes[:,3]-boxes[:,1])>=2)
         boxes,scores=boxes[valid],scores[valid]
+        # NMS conserva la caja mejor puntuada entre propuestas muy superpuestas.
         keep=nms(boxes,scores,self.nms_iou,max_detections=100)
         predictions=[]
         for i in keep:
             x1,y1,x2,y2=map(float,boxes[i])
+            # Devuelve al eje original las cajas de una vista reflejada.
             box=(width-x2,y1,width-x1,y2) if flip else (x1,y1,x2,y2)
             predictions.append({'box':box,'score':float(scores[i])})
         return predictions
@@ -114,6 +129,8 @@ class NeuralDetector:
 
 @dataclass(frozen=True)
 class ObjectReading:
+    """Reúne la detección espacial y la lectura del material para mostrar en pantalla."""
+
     detection: Detection
     reading: object
     track_id: int = 0
@@ -121,7 +138,7 @@ class ObjectReading:
 
 
 def primary_detection(detections,previous_box=None):
-    """One object; retain a nearby candidate when its score is close to the best."""
+    """Elige un residuo y da continuidad al anterior si su caja y puntuación son cercanas."""
     if not detections:return None
     best=max(detections,key=lambda d:d.confidence)
     if previous_box is not None:
@@ -133,7 +150,7 @@ def primary_detection(detections,previous_box=None):
 
 
 class ObjectTracker:
-    """Un residuo principal estable; elimina pérdidas sin cajas fantasma."""
+    """Vincula el residuo principal entre fotogramas y confirma su material por votos."""
     def __init__(self, *, live=False):
         self.live=live
         self.tracks={}
@@ -142,6 +159,7 @@ class ObjectTracker:
         self.last_seen=0.
 
     def update(self,frame,detections,classifier):
+        """Asocia la caja por IoU, clasifica la región y actualiza su historial."""
         from app.stability import LiveMaterialFilter, PredictionFilter
         from dataclasses import replace
         result,new={},{}
@@ -150,6 +168,7 @@ class ObjectTracker:
         if self.live and now-self.last_seen>1.1:self.tracks.clear()
         previous=next(iter(self.tracks.values()),None)
         selected=primary_detection(detections,previous['box'] if previous else None)
+        # Tras dos lecturas sin detección se descarta el historial del objeto.
         if self.live and not selected:
             self.misses+=1
             if self.misses>=2:self.tracks.clear()
@@ -164,10 +183,12 @@ class ObjectTracker:
                 self.next_id+=1
             used.add(key)
             track=self.tracks.get(key)
+            # Un objeto nuevo empieza con su propio historial de votos.
             if track is None:
                 track={'box':detection.box,'filter':LiveMaterialFilter() if self.live else PredictionFilter()}
             box=detection.box if self.live else tuple(.25*a+.75*b for a,b in zip(track['box'],detection.box))
             detection=replace(detection,box=box)
+            # La caja es para seguimiento. La región del mismo fotograma se clasifica.
             reading=classifier.classify(frame,region=detection.region)
             temporal=track['filter'].update(frame,reading)
             result[key]=ObjectReading(detection,temporal or reading,key,temporal is not None)
@@ -177,11 +198,13 @@ class ObjectTracker:
 
 
 def analyze_objects(frame,detector,classifier):
+    """En una foto, detecta el residuo principal y clasifica una sola vez su región."""
     selected=primary_detection(detector.detect(frame))
     return [ObjectReading(selected,classifier.classify(frame,region=selected.region))] if selected else []
 
 
 def annotate_objects(frame,objects):
+    """Dibuja la caja original y la etiqueta de material sobre una copia del fotograma."""
     from app.recycling import LABELS
     import unicodedata
     output=frame.copy()

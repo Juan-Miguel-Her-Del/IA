@@ -1,4 +1,4 @@
-/* Follow the detector's box between replies by matching its image texture. */
+/* Sigue la caja del detector entre respuestas comparando la textura del video. */
 const BOX_MAX_AGE = 1100;
 const UNTRACKED_MAX_AGE = 650;
 const MAX_REPLY_AGE = 4000;
@@ -11,6 +11,7 @@ function boxOverlap(a, b) {
 }
 
 function boxTemplate(frame, box) {
+  // Toma una cuadrícula de 12 × 12 dentro de la caja y centra sus intensidades.
   const {width, height, pixels} = frame;
   const sampleX = [], sampleY = [], values = [];
   for (let row = 0; row < 12; row++) {
@@ -25,6 +26,7 @@ function boxTemplate(frame, box) {
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   const centered = Float32Array.from(values, value => value - mean);
   const energy = centered.reduce((sum, value) => sum + value * value, 0);
+  // Una región plana o demasiado pequeña ofrece pocos detalles para seguirla.
   if (energy < 64 * values.length || sampleX[11] - sampleX[0] < 5 ||
       sampleY.at(-1) - sampleY[0] < 5) return null;
   return {sampleX, sampleY, centered, energy, mean, box, width, height};
@@ -44,6 +46,7 @@ class CameraBoxTrack {
   }
 
   isFresh(now) {
+    // Las cajas con una plantilla usable pueden seguirse durante más tiempo.
     const limit = this.template ? BOX_MAX_AGE : UNTRACKED_MAX_AGE;
     return now - this.observedAt < limit;
   }
@@ -54,6 +57,7 @@ class CameraBoxTrack {
     if (frame.width !== width || frame.height !== height) return false;
     const pixels = frame.pixels;
     let bestScore = -Infinity, bestX = this.dx, bestY = this.dy;
+    // Compara la plantilla en desplazamientos cercanos a la posición anterior.
     const consider = (dx, dy) => {
       if (sampleX[0] + dx < 0 || sampleX.at(-1) + dx >= width ||
           sampleY[0] + dy < 0 || sampleY.at(-1) + dy >= height) return;
@@ -75,6 +79,7 @@ class CameraBoxTrack {
         bestY = dy;
       }
     };
+    // Busca primero de dos en dos y refina después alrededor de la mejor posición.
     for (let dy = this.dy - 8; dy <= this.dy + 8; dy += 2) {
       for (let dx = this.dx - 8; dx <= this.dx + 8; dx += 2) consider(dx, dy);
     }
@@ -97,12 +102,12 @@ function trackFromReply(detection, request, now) {
   if (!detection || !request.frame || now < request.sent || now-request.sent >= MAX_REPLY_AGE) return null;
   const candidate = new CameraBoxTrack(detection, request.frame, request.sent);
   if (candidate.template) {
+    // Recorre los fotogramas que llegaron mientras Python procesaba la solicitud.
     const frames = request.frames || [];
     for (const frame of frames) {
       candidate.unmatchedFrames = candidate.follow(frame) ? 0 : candidate.unmatchedFrames+1;
     }
-    // Refresh age only after visual verification on a recent browser frame.
-    // A late prediction by itself must never create a stale/ghost box.
+    // Renueva la vigencia solo tras encontrar el objeto en el fotograma más reciente.
     if (frames.length) {
       if (candidate.unmatchedFrames) return null;
       candidate.observedAt = now;

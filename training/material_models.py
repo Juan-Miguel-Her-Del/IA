@@ -4,6 +4,7 @@ from training.hybrid import ARCHITECTURE as HYBRID_ARCHITECTURE, build_hybrid
 
 
 def build_material_model(config):
+    """Crea el híbrido o la CNN residual para una comparación desde cero."""
     if config.get('initialization') != 'random_from_scratch':
         raise ValueError('Los candidatos de material deben empezar aleatoriamente.')
     if config.get('architecture') == HYBRID_ARCHITECTURE:

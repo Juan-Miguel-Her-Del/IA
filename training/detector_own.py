@@ -1,7 +1,7 @@
-"""VisionLocaliza-D2: diseño propio con capas básicas de PyTorch.
+"""VisionLocaliza-D2 localiza residuos con cinco etapas convolucionales.
 
-Cinco etapas convolucionales, contexto global y tres cabezas independientes.
-No importa backbones, necks, cabezas ni pesos de bibliotecas de detección.
+Combina tres mapas de detalle con un resumen de la escena. Su única clase es
+`residuo`. La identificación del material ocurre después, sobre el recorte.
 """
 import math
 
@@ -10,16 +10,20 @@ from torch import nn
 from torch.nn import functional as F
 
 ARCHITECTURE = 'VisionLocaliza-D2'
+# Cada paso del mapa corresponde a 8, 16 o 32 píxeles de la entrada.
 STRIDES = (8, 16, 32)
 
 
 def conv(incoming, outgoing, kernel=3, stride=1, dilation=1):
+    """Extrae rasgos, normaliza los canales y aplica una activación ReLU."""
     return nn.Sequential(nn.Conv2d(incoming,outgoing,kernel,stride,
                                   dilation*(kernel//2),dilation=dilation,bias=False),
                          nn.BatchNorm2d(outgoing),nn.ReLU(inplace=True))
 
 
 class LocalizationHead(nn.Module):
+    """Predice por celda seis valores: presencia, centro x/y, ancho/alto y calidad."""
+
     def __init__(self, channels):
         super().__init__()
         self.local=conv(channels,48,kernel=1)
@@ -30,12 +34,15 @@ class LocalizationHead(nn.Module):
 
     def forward(self,features,context):
         local=self.local(features)
+        # Todas las celdas reciben el mismo resumen global junto a sus rasgos locales.
         context=context.expand(-1,-1,*local.shape[-2:])
         mixed=self.mix(torch.cat((local,context),dim=1))
         return torch.cat((self.presence(mixed),self.box(mixed),self.quality(mixed)),dim=1)
 
 
 class VisionLocaliza(nn.Module):
+    """Construye mapas para objetos pequeños, medianos y grandes."""
+
     def __init__(self):
         super().__init__()
         self.stem=conv(3,16,kernel=5,stride=2)
@@ -43,6 +50,7 @@ class VisionLocaliza(nn.Module):
         self.small=nn.Sequential(conv(32,64,stride=2),conv(64,64))
         self.medium=nn.Sequential(conv(64,96,stride=2),conv(96,96))
         self.large=nn.Sequential(conv(96,128,stride=2),conv(128,128))
+        # El promedio espacial comprime el mapa profundo en un vector de 16 canales.
         self.context=nn.Sequential(nn.AdaptiveAvgPool2d(1),nn.Conv2d(128,16,1),nn.ReLU(inplace=True))
         self.heads=nn.ModuleList(LocalizationHead(c) for c in (64,96,128))
         for layer in self.modules():
@@ -52,12 +60,14 @@ class VisionLocaliza(nn.Module):
             elif isinstance(layer,nn.BatchNorm2d):
                 nn.init.ones_(layer.weight);nn.init.zeros_(layer.bias)
         for head in self.heads:
+            # Al inicio la presencia es cercana al 1 %, pues suele haber pocas celdas positivas.
             nn.init.constant_(head.presence.bias,math.log(.01/.99))
             nn.init.normal_(head.presence.weight,std=.01)
             nn.init.normal_(head.box[-1].weight,std=.01)
             nn.init.normal_(head.quality.weight,std=.01)
 
     def forward(self,images):
+        # Con una imagen de 512 × 512, las cabezas operan en mapas de 64², 32² y 16².
         detail=self.detail(self.stem(images))
         small=self.small(detail)
         medium=self.medium(small)
@@ -67,16 +77,19 @@ class VisionLocaliza(nn.Module):
 
 
 def decode_head(raw,stride):
-    """Cada posición predice centro dentro de su celda y anchura/altura positivas."""
+    """Convierte las predicciones de cada celda en esquinas (x1, y1, x2, y2)."""
     _,_,height,width=raw.shape
     y,x=torch.meshgrid(torch.arange(height,device=raw.device),torch.arange(width,device=raw.device),indexing='ij')
     grid=torch.stack((x,y)).to(raw.dtype).unsqueeze(0)
+    # Sigmoide sitúa el centro dentro de la celda. Softplus da dimensiones positivas.
+    # Multiplicar por el paso del mapa convierte ambas magnitudes a píxeles.
     center=(raw[:,1:3].sigmoid()+grid)*stride
     size=F.softplus(raw[:,3:5])*stride*4
     return torch.cat((center-size/2,center+size/2),dim=1)
 
 
 def aligned_iou(first,second,generalized=False):
+    """Compara cajas por pares. GIoU añade una penalización por espacio sin cubrir."""
     intersection=(torch.minimum(first[:,2:],second[:,2:])-torch.maximum(first[:,:2],second[:,:2])).clamp(min=0).prod(1)
     area_first=(first[:,2:]-first[:,:2]).clamp(min=0).prod(1)
     area_second=(second[:,2:]-second[:,:2]).clamp(min=0).prod(1)
@@ -88,10 +101,10 @@ def aligned_iou(first,second,generalized=False):
 
 
 def make_targets(outputs,boxes):
-    """Asigna por área visible: pequeño <64 px, mediano <160 px, grande.
+    """Asigna cada caja anotada a una escala según la raíz cuadrada de su área.
 
-    Las cajas son anotaciones humanas transformadas; nunca se fabrican cajas.
-    Si dos centros ocupan una celda, se conserva la caja menor y se registra.
+    Los cortes son 64 y 160 píxeles en la imagen de entrada al modelo. Si dos
+    centros ocupan la misma celda y escala, la caja menor tiene prioridad.
     """
     targets=[]
     collisions=0
@@ -114,6 +127,7 @@ def make_targets(outputs,boxes):
                 collisions+=1
                 old=target['boxes'][batch_index,y,x]
                 if (old[2]-old[0])*(old[3]-old[1]) <= width*height:continue
+            # El pico señala el centro. El halo suaviza la penalización a celdas vecinas.
             sigma=max(.5,min(2.,min(width,height)/stride/5))
             radius=math.ceil(3*sigma)
             x1,x2=max(0,x-radius),min(target['heat'].shape[2],x+radius+1)
@@ -129,6 +143,7 @@ def make_targets(outputs,boxes):
 
 
 def detection_loss(outputs,boxes=None,prepared_targets=None):
+    """Enseña a encontrar el centro, ajustar la caja y estimar su solapamiento."""
     # Calcular las pérdidas en float32, incluso al usar autocast en la GPU.
     outputs=[o.float() for o in outputs]
     targets,collisions=prepared_targets if prepared_targets is not None else make_targets(outputs,boxes)
@@ -138,9 +153,11 @@ def detection_loss(outputs,boxes=None,prepared_targets=None):
     for raw,target,stride in zip(outputs,targets,STRIDES):
         positive=target['positive'];truth=target['heat']
         probability=raw[:,0].sigmoid().clamp(1e-5,1-1e-5)
+        # La pérdida focal reduce el peso de los fondos que ya son fáciles de reconocer.
         heat=heat+(-(1-probability).pow(2)*probability.log()*positive
                    -probability.pow(2)*(1-probability).log()*(1-truth).pow(4)*(~positive)).sum()
         if not positive.any():continue
+        # Centro, tamaño y geometría se supervisan donde se asignó una caja real.
         decoded=decode_head(raw,stride).permute(0,2,3,1)[positive]
         actual=target['boxes'][positive]
         geometry=geometry+(1-aligned_iou(decoded,actual,generalized=True)).sum()
@@ -149,22 +166,24 @@ def detection_loss(outputs,boxes=None,prepared_targets=None):
         predicted_size=F.softplus(raw[:,3:5]).permute(0,2,3,1)[positive].clamp(min=1e-4).log()
         actual_size=((actual[:,2:]-actual[:,:2])/(stride*4)).clamp(min=1e-4).log()
         size=size+F.smooth_l1_loss(predicted_size,actual_size,reduction='sum')
+        # La rama de calidad aprende el IoU de la caja actual. detach aísla ese objetivo.
         quality=quality+F.binary_cross_entropy_with_logits(raw[:,5][positive],aligned_iou(decoded.detach(),actual).detach(),reduction='sum')
     normalizer=max(count,1)
     losses={'presence':heat/normalizer,'GIoU':geometry/normalizer,'offset':offset/normalizer,
             'size':size/normalizer,'quality':quality/normalizer}
+    # El término GIoU tiene mayor peso para favorecer el ajuste espacial.
     total=losses['presence']+3*losses['GIoU']+losses['offset']+losses['size']+losses['quality']
     return total,dict(losses,positive_cells=count,collisions=collisions)
 
 
 def decode_predictions(outputs,confidence=.05,max_candidates=1500):
-    """Devuelve cajas y puntuaciones por imagen; NMS se aplica fuera de la red."""
+    """Une las propuestas de las tres escalas y conserva las mejor puntuadas."""
     results=[]
     decoded=[decode_head(o.float(),s).permute(0,2,3,1) for o,s in zip(outputs,STRIDES)]
     for index in range(outputs[0].shape[0]):
         all_boxes=[];all_scores=[]
         for raw,boxes in zip(outputs,decoded):
-            # Presencia de centro y calidad de localización son objetivos distintos.
+            # Una caja puntúa alto cuando parece contener un residuo y estar bien ajustada.
             score=raw[index,0].float().sigmoid()*raw[index,5].float().sigmoid()
             mask=score>=confidence
             all_boxes.append(boxes[index][mask]);all_scores.append(score[mask])

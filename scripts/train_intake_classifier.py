@@ -9,6 +9,7 @@ from utils.config import PROJECT_ROOT
 
 
 def main():
+    """Lee la configuración y ejecuta inspección, prueba corta o entrenamiento."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, default=PROJECT_ROOT/'config/train_intake_hybrid.json')
     parser.add_argument('--dataset', type=Path)
@@ -25,6 +26,7 @@ def main():
         config['dataset_dir'] = str(args.dataset.resolve())
     validate_config(config)
     if args.inspect:
+        # Lee los metadatos y cuenta parámetros para revisar la configuración.
         _, _, _, data = prepare_data(config)
         model = build_material_model(config)
         print(json.dumps({'architecture': config['architecture'], 'parameters': sum(p.numel() for p in model.parameters()),

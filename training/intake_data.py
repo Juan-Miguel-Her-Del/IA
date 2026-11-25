@@ -70,6 +70,7 @@ def _historical_reference(config):
 
 
 def collect_material_rows(root, split, config, policy=None, *, final_test=False):
+    """Lee las anotaciones COCO y las convierte en muestras de entrenamiento o evaluación."""
     if split not in ('train', 'val') and not (split == 'test' and final_test is True):
         raise ValueError('El entrenamiento solo lee train y val; test permanece reservado.')
     root = Path(root).resolve()
@@ -93,6 +94,7 @@ def collect_material_rows(root, split, config, policy=None, *, final_test=False)
         if len(images) != len(document['images']):
             raise ValueError('IDs de imagen repetidos en COCO.')
         categories = {c['id']: c['name'].strip().lower() for c in document['categories']}
+        # Agrupa por identificador de imagen para admitir varios objetos en una foto.
         annotations = defaultdict(list)
         annotation_ids = set()
         for annotation in document['annotations']:
@@ -125,6 +127,7 @@ def collect_material_rows(root, split, config, policy=None, *, final_test=False)
                       'size': stat.st_size, 'mtime_ns': stat.st_mtime_ns}
             current = annotations[image['id']]
             if current:
+                # En COCO la caja se guarda como (x, y, ancho, alto).
                 for annotation in current:
                     label = categories[annotation['category_id']]
                     box = annotation.get('bbox', [])
@@ -137,6 +140,7 @@ def collect_material_rows(root, split, config, policy=None, *, final_test=False)
                     rows.append(dict(common, label=CLASSES.index(label), crop=box, annotation_id=annotation['id']))
                     stats['box_crops'] += 1
             elif image.get('annotation_status') == 'image_label_only' and image.get('material_label') in CLASSES:
+                # Una etiqueta explícita permite entrenar al clasificador con la foto completa.
                 rows.append(dict(common, label=CLASSES.index(image['material_label']), crop=None, annotation_id=None))
                 stats['image_label_samples'] += 1
             else:
@@ -150,12 +154,15 @@ def collect_material_rows(root, split, config, policy=None, *, final_test=False)
 
 
 def assert_disjoint(train_rows, val_rows):
+    """Comprueba que el entrenamiento y la validación tengan fotos y familias distintas."""
     for key in ('path', 'group'):
         if {r[key] for r in train_rows} & {r[key] for r in val_rows}:
             raise ValueError(f'Una misma foto aparece en train y val ({key}).')
 
 
 class IntakeMaterialDataset(Dataset):
+    """Entrega al clasificador un tensor RGB y el índice del material correcto."""
+
     def __init__(self, rows, config, training=False):
         self.rows = rows
         self.transform = build_transform(config, training)
@@ -169,6 +176,7 @@ class IntakeMaterialDataset(Dataset):
         return len(self.rows)
 
     def _bytes(self, row):
+        """Reutiliza los archivos comprimidos recientes hasta el límite de memoria."""
         path = Path(row['path'])
         stat = path.stat()
         if (stat.st_size, stat.st_mtime_ns) != (row['size'], row['mtime_ns']):
@@ -194,6 +202,7 @@ class IntakeMaterialDataset(Dataset):
                 raise ValueError('Dimensiones u orientación distintas de las anotaciones.')
             image = source.convert('RGB')
         if row['crop'] is not None:
+            # Centra un recorte cuadrado con margen y limita sus bordes al área visible.
             x, y, w, h = row['crop']
             side = max(w, h)*(1+2*self.margin)
             cx, cy = x+w/2, y+h/2

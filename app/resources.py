@@ -13,12 +13,14 @@ from utils.config import PROJECT_ROOT, data_root
 @st.cache_resource(show_spinner="Cargando el modelo de materiales…", max_entries=2)
 def get_model(path, modified_ns, size_bytes, cpu_threads=2, candidate_path=None,
               candidate_modified_ns=None,candidate_size_bytes=None,candidate_threshold=.4,candidate_weight=None):
+    """Comparte el clasificador. Tamaño y fecha invalidan la caché si cambia el archivo."""
     return InferenceService(path,cpu_threads,candidate_path,candidate_threshold,candidate_weight)
 
 
 @st.cache_resource(show_spinner="Cargando el detector neuronal propio…", max_entries=2)
 def get_detector(path, modified_ns, size_bytes, cpu_threads=2, confidence=.35, nms_iou=.45,
                  views=()):
+    """Comparte el detector por checkpoint, umbrales y vistas de inferencia."""
     from app.detector import NeuralDetector
     return NeuralDetector(path,cpu_threads,confidence,nms_iou,views)
 

@@ -130,6 +130,7 @@ async function start(){
   }
 }
 function motionFrame() {
+  // La plantilla de seguimiento usa una miniatura en escala de grises.
   motionPen.drawImage(video,0,0,motion.width,motion.height);
   const rgba=motionPen.getImageData(0,0,motion.width,motion.height).data;
   const pixels=new Uint8Array(motion.width*motion.height);
@@ -168,6 +169,7 @@ function tick(now){
     const canSend=!pending&&now-lastSent>=interval&&enabled&&!document.hidden&&
       video.videoWidth>=16&&video.videoHeight>=16;
     if(!document.hidden && now-lastMotion>=30 && video.currentTime!==videoTime && (track || pending?.frame || canSend)) {
+      // El navegador mueve la caja usando el video mientras espera otra inferencia.
       videoTime=video.currentTime;
       lastMotion=now;
       const currentFrame=motionFrame();
@@ -199,6 +201,7 @@ function tick(now){
       pen.fillText(material.label,Math.max(4,x1*overlay.width),Math.max(24,y1*overlay.height-8));
     }
     if(canSend){
+      // Python recibe un JPEG de hasta 640 píxeles por lado y su número de secuencia.
       const scale=Math.min(1,640/Math.max(video.videoWidth,video.videoHeight));
       capture.width=Math.round(video.videoWidth*scale);capture.height=Math.round(video.videoHeight*scale);
       capturePen.drawImage(video,0,0,capture.width,capture.height);
@@ -216,6 +219,7 @@ window.addEventListener('message',event=>{
   const args=event.data.args||{};enabled=!event.data.disabled;interval=Math.max(80,args.interval_ms||120);
   if(Array.isArray(args.guide) && args.guide.length===4)guideBox=args.guide;
   const reply=args.response;
+  // Aplica únicamente la respuesta de la solicitud pendiente de esta cámara.
   if(reply&&reply.stream_id===streamId&&pending&&reply.sequence===pending.sequence){
     const request=pending;
     pending=null;

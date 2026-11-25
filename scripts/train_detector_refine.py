@@ -43,6 +43,7 @@ def candidate_quality_loss(outputs,targets,topk=12):
 
 
 def complete_object_loss(outputs,targets,collisions,config=None):
+    """Refuerza la coincidencia de los bordes y la cobertura del objeto completo."""
     config=config or {}
     loss,parts=detection_loss(outputs,prepared_targets=(targets,collisions))
     edge=sum(o.sum()*0 for o in outputs);missing=edge;geometry=edge;negative_quality=edge
@@ -54,12 +55,14 @@ def complete_object_loss(outputs,targets,collisions,config=None):
             actual=target['boxes'][positive]
             size=(actual[:,2:]-actual[:,:2]).clamp(min=4)
             scale=torch.cat((size,size),1)
+            # Normaliza el error por las dimensiones de la caja anotada.
             edge=edge+F.smooth_l1_loss((predicted-actual)/scale,torch.zeros_like(actual),reduction='sum')
+            # Penaliza especialmente los bordes que dejan parte del objeto afuera.
             deficits=torch.cat(((predicted[:,:2]-actual[:,:2]).clamp(min=0),
                                 (actual[:,2:]-predicted[:,2:]).clamp(min=0)),1)/scale
             missing=missing+deficits.sum()
             geometry=geometry+(1-aligned_iou(predicted,actual,generalized=True)).sum()
-        # Quality is also supervised on a few confident false center candidates.
+        # Si se activa, enseña a bajar la calidad de centros falsos muy puntuados.
         if config.get('negative_quality_weight',.2)>0:
             absent=(target['heat']<.05)&(~positive)
             candidates=raw[:,0].float().sigmoid().detach().masked_fill(~absent,0).flatten()

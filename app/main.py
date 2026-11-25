@@ -19,7 +19,9 @@ from app.vision import decode_image,annotate_region
 
 
 def show_result(reading,threshold):
+    """Presenta el material y consulta la orientación de separación por etiqueta."""
     info=guidance(reading.material)
+    # El umbral de material controla el texto «Posible» tras la clasificación.
     uncertain=reading.confidence<threshold
     title=('Posible ' if uncertain else '')+info['label'].lower()
     color='green' if reading.material=='organicos' else 'white'
@@ -31,6 +33,7 @@ def show_result(reading,threshold):
 
 
 def show_objects(objects,threshold):
+    """Muestra la lectura más confiable de cada material recibido."""
     if not objects:st.info('Muestra un residuo completo frente a la cámara.')
     readings={}
     for item in objects:
@@ -41,8 +44,10 @@ def show_objects(objects,threshold):
 
 
 def live_panel(service,detector,threshold,model_key):
+    """Conecta el componente de cámara con los modelos que corren en Python."""
     previous=st.session_state.get('browser_recognition')
     if previous is None or previous[0]!=model_key:
+        # Cada sesión conserva su historial. Cambiar los pesos inicia otro seguimiento.
         previous=(model_key,BrowserRecognition(threshold));st.session_state['browser_recognition']=previous
     recognition=previous[1]
     def receive_frame():
@@ -53,6 +58,7 @@ def live_panel(service,detector,threshold,model_key):
 
 
 def photo_panel(mode,service,detector,settings,model_key):
+    """Procesa una foto y ofrece un recorte manual como alternativa."""
     upload=(st.camera_input('Tomar una fotografía',key='camera_photo') if mode=='Tomar foto' else
             st.file_uploader('Selecciona una imagen',type=['jpg','jpeg','png','webp'],key='upload_photo'))
     if upload is None:return
@@ -60,6 +66,8 @@ def photo_panel(mode,service,detector,settings,model_key):
         payload=upload.getvalue()
         rgb=decode_image(payload,settings['max_upload_mb']*1024*1024,settings['max_image_pixels'],reserved_image_hashes())
         key=(hashlib.sha256(payload).hexdigest(),model_key)
+        # Streamlit vuelve a ejecutar el panel al mover un control. La clave
+        # permite reutilizar la inferencia si la foto y los pesos son los mismos.
         previous=st.session_state.get('photo_result')
         if previous is None or previous[0]!=key:
             with st.spinner('Reconociendo residuo…'):objects=analyze_objects(rgb,detector,service)
@@ -71,6 +79,7 @@ def photo_panel(mode,service,detector,settings,model_key):
             if objects:show_objects(objects,settings['low_confidence_threshold'])
             else:st.info('No se reconoció un residuo. Prueba otra foto con más luz y el objeto completo.')
         with st.expander('Ajustar el recorte si no lo reconoce'):
+            # Los porcentajes se convierten a una región que entra directo al clasificador.
             horizontal=st.slider('Horizontal (%)',0,100,(20,80),key='manual_x')
             vertical=st.slider('Vertical (%)',0,100,(20,80),key='manual_y')
             bounds=(horizontal[0]/100,vertical[0]/100,horizontal[1]/100,vertical[1]/100)
@@ -82,6 +91,7 @@ def photo_panel(mode,service,detector,settings,model_key):
 
 
 def main():
+    """Carga la pareja de modelos configurada y selecciona el origen de la imagen."""
     st.set_page_config(page_title='Vision-IA',page_icon='♻',layout='wide',initial_sidebar_state='collapsed')
     st.markdown(f'<style>{(ROOT/"app/style.css").read_text(encoding="utf-8")}</style>',unsafe_allow_html=True)
     st.title('Vision-IA')
@@ -89,6 +99,7 @@ def main():
     settings=load_settings()
     mode=st.radio('Origen de la imagen',['Cámara en vivo','Tomar foto','Subir imagen'],horizontal=True,key='image_source',label_visibility='collapsed')
     try:
+        # La firma del archivo renueva la caché si cambian los pesos.
         model_key=(*checkpoint_signature(settings['checkpoint']),settings['cpu_threads'])
         if settings.get('material_candidate_checkpoint'):
             model_key+=(*checkpoint_signature(settings['material_candidate_checkpoint']),

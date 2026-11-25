@@ -51,6 +51,7 @@ def exclusive_training():
 
 
 def run_pair(run_dir, resume=False):
+    """Entrena en secuencia la CNN residual y el híbrido con las mismas muestras."""
     run_dir = Path(run_dir).resolve()
     policy = json.loads((PROJECT_ROOT/'config/material_intake_policy.json').read_text(encoding='utf-8'))
     dataset = Path(policy['dataset_root']).resolve()
@@ -86,6 +87,7 @@ def run_pair(run_dir, resume=False):
                 if not state.get('complete'):
                     raise RuntimeError(f'{name} no publicó una terminación válida.')
                 current = state['manifest_sha256']
+                # Una huella común permite comparar los modelos sobre el mismo conjunto.
                 if fingerprint is not None and current != fingerprint:
                     raise RuntimeError('Los dos modelos no usaron las mismas muestras; no comparar sus resultados.')
                 fingerprint = current

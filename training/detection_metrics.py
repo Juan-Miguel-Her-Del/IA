@@ -4,12 +4,14 @@ import numpy as np
 
 
 def box_iou(a,b):
+    """Mide cuánto coinciden dos cajas: área compartida dividida por área total."""
     area=max(0,min(a[2],b[2])-max(a[0],b[0]))*max(0,min(a[3],b[3])-max(a[1],b[1]))
     union=(a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-area
     return area/union if union else 0.
 
 
 def nms(boxes,scores,threshold=.45,max_detections=20):
+    """Suprime cajas redundantes según la puntuación y el IoU entre propuestas."""
     boxes=np.asarray(boxes,dtype=np.float32).reshape(-1,4)
     scores=np.asarray(scores)
     order=np.argsort(-scores,kind='stable')
@@ -25,7 +27,7 @@ def nms(boxes,scores,threshold=.45,max_detections=20):
 
 
 def fuse_detection_views(views, association_iou=.50, lone_factor=.78, final_nms=.45, min_confidence=0.):
-    """Refine boxes that agree across views and lower isolated detection scores."""
+    """Promedia cajas coincidentes entre vistas y reduce la puntuación de las aisladas."""
     active = [(source, prediction) for source, view in enumerate(views) for prediction in view]
     if not active:
         return []
@@ -37,12 +39,13 @@ def fuse_detection_views(views, association_iou=.50, lone_factor=.78, final_nms=
     fused, confidence = [], []
     for seed in np.argsort(-scores, kind='stable'):
         if scores[seed] < min_confidence:
-            break  # The fused confidence cannot exceed the maximum input score.
+            break  # La puntuación combinada está acotada por la mejor puntuación de entrada.
         if not remaining[seed]:
             continue
         overlap = np.maximum(0, np.minimum(boxes[seed, 2:], boxes[:, 2:]) - np.maximum(boxes[seed, :2], boxes[:, :2])).prod(1)
         iou = overlap / np.maximum(areas[seed] + areas - overlap, 1e-9)
         matching = remaining & (iou >= association_iou)
+        # Se elige como máximo una coincidencia de cada vista.
         partners = [seed]
         for source in range(len(views)):
             if source == sources[seed]:
@@ -60,6 +63,7 @@ def fuse_detection_views(views, association_iou=.50, lone_factor=.78, final_nms=
 
 
 def match(predictions,truth,threshold=.5):
+    """Asocia cada predicción a una caja anotada disponible, por orden de confianza."""
     remaining=set(range(len(truth)))
     matches=[]
     for index,p in sorted(enumerate(predictions),key=lambda pair:-pair[1]['score']):
@@ -70,8 +74,11 @@ def match(predictions,truth,threshold=.5):
 
 
 def spatial_metrics(records,confidence=.35):
+    """Calcula AP espacial y métricas de detección para la única clase, residuo."""
     total=sum(len(r['truth']) for r in records)
     aps=[]
+    # AP resume la curva precisión–recobrado al barrer puntuaciones. Se repite
+    # con diez exigencias de solapamiento, desde IoU 0,50 hasta 0,95.
     for threshold in np.linspace(.5,.95,10):
         scored=[]
         for r in records:
@@ -87,6 +94,7 @@ def spatial_metrics(records,confidence=.35):
     true_positives,predicted,ious=0,0,[]
     off_center_total,off_center_matched=0,0
     category_total,category_matched=Counter(),Counter()
+    # El umbral de confianza se aplica aquí para precisión y recobrado operativos.
     for r in records:
         ps=[p for p in r['predictions'] if p['score']>=confidence]
         matches=match(ps,r['truth'])

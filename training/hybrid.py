@@ -1,4 +1,4 @@
-"""CNN + atención propia para seis materiales; sin modelos ni pesos externos."""
+"""VisionHybrid-v1 combina convoluciones y autoatención para clasificar materiales."""
 import math
 
 import torch
@@ -10,6 +10,8 @@ ARCHITECTURE = 'VisionHybrid-v1'
 
 
 class SpatialAttention(nn.Module):
+    """Cada posición del recorte consulta los rasgos de todas las posiciones."""
+
     def __init__(self, dimension, heads, dropout):
         super().__init__()
         self.heads = heads
@@ -21,8 +23,11 @@ class SpatialAttention(nn.Module):
 
     def forward(self, tokens):
         batch, length, dimension = tokens.shape
+        # Q indica qué busca un token, K qué ofrece para el cálculo de similitud
+        # y V qué información aporta al promedio ponderado de la atención.
         qkv = self.qkv(tokens).reshape(batch, length, 3, self.heads, self.head_dimension)
         query, key, value = qkv.permute(2, 0, 3, 1, 4).unbind(0)
+        # Cada cabeza trabaja con una parte de los rasgos. La atención es bidireccional.
         attended = F.scaled_dot_product_attention(
             query, key, value, dropout_p=self.dropout if self.training else 0., is_causal=False)
         attended = attended.transpose(1, 2).reshape(batch, length, dimension)
@@ -30,6 +35,8 @@ class SpatialAttention(nn.Module):
 
 
 class ContextBlock(nn.Module):
+    """Relaciona posiciones con atención y refina cada token con capas lineales."""
+
     def __init__(self, dimension, heads, expansion, dropout):
         super().__init__()
         self.attention_norm = nn.LayerNorm(dimension)
@@ -40,16 +47,13 @@ class ContextBlock(nn.Module):
                                          nn.Dropout(dropout))
 
     def forward(self, tokens):
+        # Las sumas residuales conservan la entrada de cada subbloque.
         tokens = tokens + self.attention(self.attention_norm(tokens))
         return tokens + self.feedforward(self.feedforward_norm(tokens))
 
 
 class HybridMaterialCNN(nn.Module):
-    """Cuatro reducciones convolucionales, tokens espaciales y atención global.
-
-    A 160 px produce 100 tokens. El pooling medio/máximo combina contexto y
-    señales locales. Todos los parámetros aprendibles se inicializan aquí.
-    """
+    """Recibe un recorte RGB y devuelve seis puntuaciones crudas de material."""
     def __init__(self, image_size=160, dropout=.1, cnn_channels=(24, 40, 64, 96),
                  embedding_dim=128, attention_heads=4, transformer_layers=3, mlp_ratio=2):
         super().__init__()
@@ -69,6 +73,8 @@ class HybridMaterialCNN(nn.Module):
         self.image_size = image_size
         self.token_grid = image_size // 16
         self.token_count = self.token_grid ** 2
+        # Cada convolución con paso 2 divide la resolución por dos. En la
+        # configuración activa, 160 × 160 pasan a un mapa de 10 × 10.
         layers, incoming = [], 3
         for index, outgoing in enumerate(cnn_channels):
             kernel = 5 if index == 0 else 3
@@ -76,6 +82,8 @@ class HybridMaterialCNN(nn.Module):
                            nn.BatchNorm2d(outgoing), nn.GELU()))
             incoming = outgoing
         self.local_features = nn.Sequential(*layers)
+        # La convolución 1 × 1 convierte los canales de cada celda en un vector.
+        # La posición aprendida identifica de qué celda viene ese vector.
         self.token_projection = nn.Conv2d(incoming, embedding_dim, 1)
         self.position = nn.Parameter(torch.empty(1, self.token_count, embedding_dim))
         self.token_dropout = nn.Dropout(dropout)
@@ -89,6 +97,7 @@ class HybridMaterialCNN(nn.Module):
 
     @staticmethod
     def _initialize(layer):
+        """Inicializa los pesos de un modelo nuevo antes de entrenarlo desde cero."""
         if isinstance(layer, nn.Conv2d):
             nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
             if layer.bias is not None:
@@ -104,14 +113,18 @@ class HybridMaterialCNN(nn.Module):
         if images.ndim != 4 or tuple(images.shape[1:]) != (3, self.image_size, self.image_size):
             raise ValueError(f'Se requiere RGB [N, 3, {self.image_size}, {self.image_size}].')
         features = self.token_projection(self.local_features(images))
+        # [lote, canales, alto, ancho] pasa a [lote, posiciones, rasgos].
         tokens = features.flatten(2).transpose(1, 2)
         tokens = self.context(self.token_dropout(tokens + self.position))
         tokens = self.output_norm(tokens)
+        # El promedio resume toda la región y el máximo retiene el rasgo más marcado.
+        # La capa final entrega logits. La conversión a probabilidades va después.
         pooled = torch.cat((tokens.mean(1), tokens.amax(1)), dim=1)
         return self.classifier(pooled)
 
 
 def build_hybrid(config):
+    """Reconstruye las capas con las mismas dimensiones que usó el entrenamiento."""
     if config.get('architecture') != ARCHITECTURE:
         raise ValueError('Arquitectura híbrida desconocida.')
     required = ('image_size', 'dropout', 'cnn_channels', 'embedding_dim',

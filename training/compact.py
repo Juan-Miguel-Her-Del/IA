@@ -10,11 +10,14 @@ ARCHITECTURE = "VisionResidual-v2"
 
 
 class ResidualBlock(nn.Module):
+    """Combina rasgos de dos convoluciones con un atajo de la entrada."""
+
     def __init__(self, incoming, outgoing, stride=1):
         super().__init__()
         self.path = nn.Sequential(
             nn.Conv2d(incoming, outgoing, 3, stride, 1, bias=False), nn.BatchNorm2d(outgoing), nn.ReLU(inplace=True),
             nn.Conv2d(outgoing, outgoing, 3, 1, 1, bias=False), nn.BatchNorm2d(outgoing))
+        # El atajo ajusta canales y tamaño cuando la suma requiere igualar formas.
         self.skip = nn.Identity() if incoming == outgoing and stride == 1 else nn.Sequential(
             nn.Conv2d(incoming, outgoing, 1, stride, bias=False), nn.BatchNorm2d(outgoing))
         self.activation = nn.ReLU(inplace=True)
@@ -24,6 +27,8 @@ class ResidualBlock(nn.Module):
 
 
 class CompactCNN(nn.Module):
+    """Clasificador residual disponible para comparación y checkpoints anteriores."""
+
     def __init__(self, image_size=192, dropout=.25, channels=(24,48,96,160), pooling="avg"):
         super().__init__()
         if image_size not in (160, 192):
@@ -55,13 +60,14 @@ class CompactCNN(nn.Module):
         if images.ndim != 4 or tuple(images.shape[1:]) != (3, self.image_size, self.image_size):
             raise ValueError(f"Se requiere RGB {self.image_size} × {self.image_size}.")
         features=self.blocks(self.stem(images))
+        # Resume cada canal en toda el área. 'avgmax' incluye su activación máxima.
         pooled=features.mean(dim=(2,3))
         if self.pooling=="avgmax":pooled=torch.cat((pooled,features.amax(dim=(2,3))),dim=1)
         return self.head(pooled)
 
 
 class CompactTransform:
-    """Letterbox conserva el objeto completo; solo train aplica variaciones aleatorias."""
+    """Prepara entradas para VisionHybrid-v1 y VisionResidual-v2."""
     def __init__(self, config, training=False):
         self.size, self.training = config["image_size"], training
         self.preprocessing=config.get("preprocessing","letterbox-v2")
@@ -76,6 +82,7 @@ class CompactTransform:
         self.std = torch.tensor(self.normalization["std"], dtype=torch.float32)[:, None, None]
 
     def prepare_image(self, image):
+        """Adapta el tamaño del recorte y simula variaciones visuales durante train."""
         image = ImageOps.exif_transpose(image).convert("RGB")
         size = self.size
         if not self.training:
@@ -86,6 +93,7 @@ class CompactTransform:
                 canvas=Image.new("RGB",(size,size),(128,128,128))
                 canvas.paste(image,((size-side)//2,)*2)
                 return canvas
+            # Letterbox conserva la relación de aspecto y rellena el espacio restante.
             return ImageOps.pad(image, (size, size), method=Image.Resampling.BILINEAR, color=(128, 128, 128))
         working = round(size*self.options.get("working_scale", 1.25))
         image = image.resize((working,working),Image.Resampling.BILINEAR) if self.preprocessing=="resize-v2" else ImageOps.contain(image, (working, working), method=Image.Resampling.BILINEAR)
@@ -101,6 +109,7 @@ class CompactTransform:
             image = ImageOps.grayscale(image).convert("RGB")
         if random.random() < .1:
             image = image.filter(ImageFilter.GaussianBlur(random.uniform(.2, .8)))
+        # La escala y posición variables simulan distintas distancias y encuadres.
         if clean_layout and random.random()>=self.options.get("scale_probability",.2):
             canvas=image.resize((size,size),Image.Resampling.BILINEAR)
         else:
@@ -116,11 +125,13 @@ class CompactTransform:
         return canvas
 
     def __call__(self, image):
+        # El divisor 255 lleva cada píxel a [0, 1]. Luego se normaliza cada canal.
         pixels = np.asarray(self.prepare_image(image), dtype=np.float32).transpose(2, 0, 1).copy()/255.
         return (torch.from_numpy(pixels)-self.mean)/self.std
 
 
 def build_transform(config, training=False):
+    """Selecciona el preprocesamiento que corresponde a la arquitectura guardada."""
     if config.get("architecture") in (ARCHITECTURE, "VisionHybrid-v1"):
         return CompactTransform(config, training)
     from training.data import ImageTransform

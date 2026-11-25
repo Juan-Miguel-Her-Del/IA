@@ -7,6 +7,8 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Region:
+    """Caja (izquierda, arriba, derecha, abajo) en píxeles y método de selección."""
+
     box: tuple
     method: str
 
@@ -30,6 +32,7 @@ def iou(first, second):
 
 
 def manual_region(rgb, bounds=(.20, .20, .80, .80)):
+    """Convierte los límites relativos elegidos por el usuario a píxeles."""
     height, width = rgb.shape[:2]
     if len(bounds) != 4 or not all(np.isfinite(v) and 0 <= v <= 1 for v in bounds):
         raise ValueError("Coordenadas manuales inválidas.")
@@ -41,7 +44,7 @@ def manual_region(rgb, bounds=(.20, .20, .80, .80)):
 
 
 def square_box(box, width, height):
-    """Amplía la caja sin recortar; un ROI cuadrado evita deformar botellas al redimensionar."""
+    """Centra la caja en un cuadrado que contiene todo el recorte, cuando cabe."""
     left,top,right,bottom=box
     side=max(right-left,bottom-top)
     if side>min(width,height):
@@ -73,6 +76,7 @@ class Localizer:
         self.previous = None
 
     def locate(self, rgb):
+        """Devuelve la imagen completa, una región manual o un recorte por contornos."""
         if self.mode == "full":
             return Localization(Region((0, 0, rgb.shape[1], rgb.shape[0]), "imagen-completa"), "Imagen completa: sin localización.")
         if self.mode == "manual":
@@ -93,6 +97,7 @@ class Localizer:
         return Localization(current, result.message, result.candidates)
 
     def _automatic(self, rgb):
+        """Busca una zona que se distinga del fondo por color o por sus bordes."""
         height, width = rgb.shape[:2]
         scale = min(1., 640 / max(height, width))
         small = cv2.resize(rgb, (round(width*scale), round(height*scale)), interpolation=cv2.INTER_AREA) if scale < 1 else rgb
@@ -115,6 +120,7 @@ class Localizer:
             foreground, failure = self._border_foreground(lab)
             if failure:
                 return Localization(None, failure)
+        # Quita puntos aislados y cierra pequeños huecos antes de extraer contornos.
         foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
         foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8), iterations=2)
         foreground_contours, _ = cv2.findContours(foreground, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -153,6 +159,7 @@ class Localizer:
 
     @staticmethod
     def _border_foreground(lab):
+        """Usa el color de los bordes como referencia cuando el fondo es uniforme."""
         sh, sw = lab.shape[:2]
         band = max(2, min(sh, sw)//35)
         border = np.concatenate((lab[:band].reshape(-1, 3), lab[-band:].reshape(-1, 3),

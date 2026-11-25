@@ -1,4 +1,4 @@
-"""Browser camera frames sent through Streamlit's existing HTTPS/WebSocket channel."""
+"""Recibe fotogramas del navegador y devuelve una caja y su lectura de material."""
 import base64
 from collections import deque
 from dataclasses import replace
@@ -18,7 +18,7 @@ CAMERA_CANDIDATE_CONFIDENCE=.20
 
 
 class BrowserRecognition:
-    """Session-local tracking. No camera hardware, disk writes or remote models."""
+    """Coordina detección y clasificación temporal para una sesión de cámara."""
     def __init__(self, material_threshold=.65):
         self.tracker=ObjectTracker(live=True)
         self.material_threshold=material_threshold
@@ -33,9 +33,11 @@ class BrowserRecognition:
         self.provisional=None
 
     def _detect_live(self, frame, detector):
+        """Busca una caja fiable y comprueba continuidad en las propuestas débiles."""
         self.provisional=None
         threshold=getattr(detector,'confidence',.25)
         minimum=min(threshold,CAMERA_CANDIDATE_CONFIDENCE)
+        # El mínimo de cámara permite examinar candidatas antes de confirmarlas.
         proposals=detector.detect(frame,confidence=minimum)
         zoom=None
         zoom_attempted=False
@@ -51,9 +53,8 @@ class BrowserRecognition:
             area=max(0,x2-x1)*max(0,y2-y1)/(width*height)
             touches_edge=min(x1,y1,width-x2,height-y2)<=max(2,min(width,height)*.012)
             return area>=.65 and touches_edge
-        # A wall/torso-sized false positive must not suppress the existing
-        # central recovery. Objects shown completely inside the guide retain
-        # the normal path; this rule never chooses a material label.
+        # Una caja enorme que toca el borde puede ser fondo. Se intenta detectar
+        # de nuevo en el centro del fotograma para recuperar el residuo.
         obscures_guide=any(fills_frame(item) for item in proposals)
         if obscures_guide:
             proposals=[item for item in proposals if not fills_frame(item)]
@@ -68,6 +69,7 @@ class BrowserRecognition:
 
         now=time.monotonic()
         active=next(iter(self.tracker.tracks.values()),None)
+        # La superposición con la caja reciente ayuda a conservar el mismo objeto.
         if active and now-self.tracker.last_seen<1.1:
             for proposal in proposals:
                 if box_iou(proposal.box,active['box'])>=.5:
@@ -90,8 +92,7 @@ class BrowserRecognition:
         if candidate is None:
             self.pending_candidate=None
             return []
-        # Show the actual D2 proposal immediately in amber. It is not a
-        # confirmed track/material and does not bypass classification voting.
+        # La caja provisional puede verse en ámbar mientras se confirma su continuidad.
         self.provisional=candidate
         previous=self.pending_candidate
         readings=1
@@ -106,6 +107,7 @@ class BrowserRecognition:
 
     @staticmethod
     def _center_candidate(frame, detector, minimum):
+        """Reintenta D2 sobre el centro y devuelve la caja en coordenadas de todo el fotograma."""
         height,width=frame.shape[:2]
         left,top=round(width*.14),round(height*.14)
         zoom=frame[top:height-top,left:width-left].copy()
@@ -123,8 +125,10 @@ class BrowserRecognition:
         return None
 
     def consume(self,payload,detector,classifier):
+        """Valida el mensaje y envía al navegador el resultado de ese fotograma."""
         if not isinstance(payload,dict):return False
         sid,sequence=payload.get('stream_id'),payload.get('sequence')
+        # El identificador y la secuencia descartan mensajes repetidos o de cámaras anteriores.
         if not isinstance(sid,str) or not 1<=len(sid)<=80 or type(sequence) is not int or sequence<1:return False
         if sid in self.retired:return False
         if sid==self.stream_id and sequence<=self.sequence:return False
@@ -143,13 +147,16 @@ class BrowserRecognition:
             encoded=payload.get('image')
             if not isinstance(encoded,str) or len(encoded)>2_000_000:raise ValueError('Fotograma demasiado grande.')
             frame=decode_image(base64.b64decode(encoded,validate=True),max_bytes=1_500_000,max_pixels=640*640)
+            # D2 produce las cajas. El seguimiento entrega el recorte al clasificador.
             objects=self.tracker.update(frame,self._detect_live(frame,detector),classifier)
             self.objects=tuple(objects);self.running=True
             if objects:
                 item=objects[0];height,width=frame.shape[:2]
+                # Coordenadas relativas [0, 1] permiten dibujar sobre distintos tamaños de video.
                 box=[float(v)/scale for v,scale in zip(item.detection.box,[width,height,width,height])]
                 result=None
                 if item.confirmed:
+                    # El navegador recibe el material cuando alcanza el consenso temporal.
                     reading=item.reading
                     info=guidance(reading.material)
                     label=info['label']

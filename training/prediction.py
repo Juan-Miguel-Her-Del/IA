@@ -12,12 +12,14 @@ from utils.dataset import sha256
 
 
 def probabilities_from_logits(logits):
+    """Convierte seis puntuaciones por recorte en una distribución que suma uno."""
     if logits.ndim != 2 or logits.shape[1] != 6 or not torch.isfinite(logits).all():
         raise ValueError("La CNN debe producir seis logits finitos por imagen.")
     return torch.softmax(logits, dim=1)
 
 
 def model_probabilities(model, images, config):
+    """Predice el material y, si el checkpoint lo pide, promedia dos orientaciones."""
     probabilities = probabilities_from_logits(model(images))
     if config.get("inference_hflip", False):
         probabilities = (probabilities + probabilities_from_logits(model(images.flip(-1))))/2
@@ -43,6 +45,7 @@ def protect_test_image(path):
 
 
 def predict_image(checkpoint_path, image_path, device="cpu"):
+    """Clasifica desde la terminal una imagen individual con su checkpoint."""
     image_path = Path(image_path).expanduser().resolve()
     if not image_path.is_file():
         raise FileNotFoundError(f"No se encontro la fotografia: {image_path}")

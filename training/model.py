@@ -6,16 +6,20 @@ ARCHITECTURE = "VisionCNN-v1"
 
 
 class VisionCNN(nn.Module):
+    """CNN original para checkpoints de 128 × 128 y seis clases de material."""
+
     def __init__(self, num_classes=6, dropout=0.3):
         super().__init__()
         if num_classes != 6:
             raise ValueError("Vision-IA utiliza seis categorias.")
         layers = []
         channels = (3, 16, 32, 64)
+        # Cada bloque extrae más canales y reduce alto y ancho a la mitad.
         for incoming, outgoing in zip(channels, channels[1:]):
             layers.extend((nn.Conv2d(incoming, outgoing, kernel_size=3, padding=1, bias=False),
                            nn.BatchNorm2d(outgoing), nn.ReLU(inplace=True), nn.MaxPool2d(2)))
         self.features = nn.Sequential(*layers)
+        # Resume los mapas en una cuadrícula de 4 × 4 antes de la capa lineal.
         self.pool = nn.AdaptiveAvgPool2d((4, 4))
         self.classifier = nn.Sequential(nn.Flatten(), nn.Linear(64 * 4 * 4, 64), nn.ReLU(inplace=True),
                                         nn.Dropout(dropout), nn.Linear(64, num_classes))
@@ -40,4 +44,5 @@ class VisionCNN(nn.Module):
 
 
 def parameter_count(model):
+    """Suma la cantidad de valores aprendibles de las capas."""
     return sum(parameter.numel() for parameter in model.parameters())
