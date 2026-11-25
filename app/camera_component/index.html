@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box}body{margin:0;font:15px "Segoe UI",sans-serif;color:#183c36;background:transparent}
+.controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+button,select{font:inherit;border:1px solid #c9d9d2;border-radius:8px;padding:10px 14px;background:#fff;color:#183c36;min-height:42px}
+button{cursor:pointer}button.primary{background:#157e75;border-color:#157e75;color:white}button:disabled{opacity:.45;cursor:default}
+select{flex:1;min-width:150px;max-width:100%}button:focus-visible,select:focus-visible{outline:3px solid #58a99e;outline-offset:2px}
+.stage{position:relative;aspect-ratio:4/3;background:#e8efeb;border-radius:12px;overflow:hidden;width:100%}
+video,canvas.overlay{display:block;width:100%;height:100%;position:absolute;inset:0;object-fit:contain}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;color:#55716a}
+.camera-layout{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(0,1fr);gap:24px}
+.camera-layout>div{min-width:0}
+.result{border-left:1px solid #c9d9d2;padding:0 0 0 16px;align-self:start;min-width:0}
+.result h2{font-size:clamp(1.15rem,3vw,1.65rem);margin:0 0 8px}
+.result p{margin:0;line-height:1.5}
+.result .guide-hint{color:#55716a}
+.destination{font-weight:600}
+.bin-dot{display:inline-block;width:12px;height:12px;margin-right:7px;border:1px solid #819b91;border-radius:50%;vertical-align:middle;background:white}
+.bin-dot.green{background:#28804d}
+@media(max-width:560px){.camera-layout{grid-template-columns:minmax(0,1fr);gap:10px}}
+#notice{font-size:13px;color:#55716a;margin:8px 0 0;min-height:18px}#notice.error{color:#a82b29}
+[hidden]{display:none!important}
+</style></head>
+<body>
+<div class="camera-layout"><div>
+<div class="controls"><button id="start" class="primary">Activar cámara</button><button id="stop" disabled>Detener</button>
+<select id="device" aria-label="Cámara"><option value="">Cámara automática</option></select></div>
+<div class="stage" id="stage"><video id="video" autoplay playsinline muted></video><canvas class="overlay" id="overlay"></canvas>
+<div class="empty" id="empty">Activa la cámara para reconocer un residuo.</div></div>
+<p id="notice" role="status" aria-live="polite"></p>
+</div>
+<div class="result" id="result" aria-live="polite" hidden>
+  <h2 id="material"></h2>
+  <p id="guide-hint" class="guide-hint" hidden>Muéstralo completo dentro del recuadro.</p>
+  <p id="destination-row" class="destination" hidden><span id="bin" class="bin-dot"></span><span id="destination"></span></p>
+</div></div>
+<script src="box_tracking.js"></script>
+<script>
+// Streamlit's public v1 component message protocol; no external scripts or services.
+const $=id=>document.getElementById(id);
+const video=$('video'),overlay=$('overlay'),pen=overlay.getContext('2d');
+const capture=document.createElement('canvas'),capturePen=capture.getContext('2d');
+const motion=document.createElement('canvas'),motionPen=motion.getContext('2d',{willReadFrequently:true});
+let media=null,streamId='',sequence=0,pending=null,lastSent=0,opening=false,height=0;
+let track=null,displayBox=null,videoTime=-1,lastMotion=0,resultKey='';
+let enabled=true,interval=250;
+let guideBox=[.16,.10,.84,.90];
+function post(type,details){window.parent.postMessage({isStreamlitMessage:true,type,...details},'*');}
+function send(value){post('streamlit:setComponentValue',{value,dataType:'json'});}
+function resize(){const value=Math.ceil(document.body.scrollHeight);if(value!==height){height=value;post('streamlit:setFrameHeight',{height:value});}}
+function notice(text,error=false){$('notice').textContent=text;$('notice').className=error?'error':'';resize();}
+function showMaterial(now=performance.now()) {
+  const searching=Boolean(media && (!track || (track.misses && !track.template)));
+  const material=searching ? null : track?.detection.material;
+  let label=material?.label ?? '';
+  if(track && !material)label=now-track.startedAt<2000 ? 'Identificando material…' : 'Material sin confirmar';
+  if(searching)label='Buscando el residuo';
+  const destination=material?.destination ?? '';
+  const key=JSON.stringify([label,destination,material?.organic]);
+  if(key===resultKey)return;
+  resultKey=key;
+  $('result').hidden=!label;
+  $('material').textContent=label;
+  $('guide-hint').hidden=!searching;
+  $('destination').textContent=destination;
+  $('destination-row').hidden=!destination;
+  $('bin').classList.toggle('green',Boolean(material?.organic));
+  resize();
+}
+function clearTrack() {
+  track=null;
+  displayBox=null;
+}
+function buttons(){$('start').disabled=!!media||opening||!enabled;$('stop').disabled=!media&&!opening;}
+async function devices(){
+  if(!navigator.mediaDevices?.enumerateDevices)return;
+  const selected=$('device').value,list=await navigator.mediaDevices.enumerateDevices();
+  $('device').replaceChildren(new Option('Cámara automática',''));
+  list.filter(d=>d.kind==='videoinput').forEach((d,i)=>$('device').add(new Option(d.label||`Cámara ${i+1}`,d.deviceId)));
+  if([...$('device').options].some(o=>o.value===selected))$('device').value=selected;
+}
+function stop(report=true){
+  const previous=streamId;
+  if(media)media.getTracks().forEach(track=>track.stop());
+  media=null;video.srcObject=null;pending=null;opening=false;videoTime=-1;lastMotion=0;
+  clearTrack();showMaterial();
+  pen.clearRect(0,0,overlay.width,overlay.height);$('empty').hidden=false;
+  if(report&&previous)send({event:'stopped',stream_id:previous,sequence:++sequence});
+  streamId='';buttons();notice('');
+}
+async function start(){
+  if(opening||media)return;
+  if(!navigator.mediaDevices?.getUserMedia){notice('Abre la aplicación con HTTPS y un navegador con acceso a cámara.',true);return;}
+  opening=true;buttons();notice('Autoriza la cámara en tu navegador.');
+  const selected=$('device').value;
+  try{
+    const constraints={width:{ideal:1280,max:1920},height:{ideal:720,max:1080},frameRate:{ideal:30,max:30}};
+    if(selected)constraints.deviceId={exact:selected};else constraints.facingMode={ideal:'environment'};
+    const acquired=await navigator.mediaDevices.getUserMedia({video:constraints,audio:false});
+    if(!opening){acquired.getTracks().forEach(track=>track.stop());return;}
+    media=acquired;streamId=crypto.randomUUID();sequence=0;pending=null;lastSent=0;
+    video.srcObject=media;await video.play();opening=false;$('empty').hidden=true;buttons();notice('');
+    $('stage').style.aspectRatio=`${video.videoWidth}/${video.videoHeight}`;
+    await devices();resize();
+  }catch(error){
+    stop(false);
+    const messages={NotAllowedError:'Autoriza el acceso a la cámara para usar el video.',NotFoundError:'No se encontró una cámara. Conéctala y vuelve a intentar.',NotReadableError:'La cámara está ocupada. Cierra otras aplicaciones que la estén usando.',OverconstrainedError:'Esta cámara no admite la configuración solicitada. Prueba otra cámara.'};
+    notice(messages[error.name]||'No se pudo abrir la cámara. Comprueba su conexión y vuelve a intentar.',true);
+  }
+}
+function motionFrame() {
+  motionPen.drawImage(video,0,0,motion.width,motion.height);
+  const rgba=motionPen.getImageData(0,0,motion.width,motion.height).data;
+  const pixels=new Uint8Array(motion.width*motion.height);
+  for(let i=0;i<pixels.length;i++) {
+    const j=4*i;
+    pixels[i]=(rgba[j]*77+rgba[j+1]*150+rgba[j+2]*29)>>8;
+  }
+  return {pixels,width:motion.width,height:motion.height};
+}
+
+function applyDetection(detection, request, now) {
+  const age=now-request.sent;
+  if(age>=BOX_MAX_AGE || !request.frame)return;
+  if(!detection) {
+    if(track && ++track.misses>=2)clearTrack();
+    return;
+  }
+  const candidate=new CameraBoxTrack(detection,request.frame,request.sent);
+  if(!candidate.isFresh(now))return;
+  if(candidate.template) {
+    for(const frame of request.frames) {
+      candidate.unmatchedFrames=candidate.follow(frame)?0:candidate.unmatchedFrames+1;
+    }
+    // Use the newest visible frame to verify a delayed reply, even if intermediate frames failed.
+    if(candidate.unmatchedFrames)return;
+  }
+  const sameObject=track?.detection.track_id===detection.track_id && displayBox &&
+    boxOverlap(displayBox,candidate.box)>=.3;
+  if(sameObject)candidate.startedAt=track.startedAt;
+  else displayBox=null;
+  track=candidate;
+}
+
+function tick(now){
+  if(media&&video.readyState>=2){
+    if(overlay.width!==video.videoWidth||overlay.height!==video.videoHeight){
+      overlay.width=video.videoWidth;overlay.height=video.videoHeight;
+      const scale=Math.min(1,192/Math.max(video.videoWidth,video.videoHeight));
+      motion.width=Math.max(1,Math.round(video.videoWidth*scale));
+      motion.height=Math.max(1,Math.round(video.videoHeight*scale));
+      clearTrack();videoTime=-1;
+      if(pending)pending.frame=null;
+      $('stage').style.aspectRatio=`${video.videoWidth}/${video.videoHeight}`;resize();
+    }
+    const canSend=!pending&&now-lastSent>=interval&&enabled&&!document.hidden&&
+      video.videoWidth>=16&&video.videoHeight>=16;
+    if(!document.hidden && now-lastMotion>=30 && video.currentTime!==videoTime && (track || pending?.frame || canSend)) {
+      videoTime=video.currentTime;
+      lastMotion=now;
+      const currentFrame=motionFrame();
+      if(pending?.frame && now-pending.sent<BOX_MAX_AGE)pending.frames.push(currentFrame);
+      if(track?.template) {
+        track.unmatchedFrames=track.follow(currentFrame)?0:track.unmatchedFrames+1;
+        if(track.unmatchedFrames>=2)clearTrack();
+      }
+    }
+    if(track && !track.isFresh(now))clearTrack();
+    showMaterial(now);
+    pen.clearRect(0,0,overlay.width,overlay.height);
+    if(track){
+      displayBox=displayBox ? displayBox.map((value,i)=>value+.55*(track.box[i]-value)) : track.box;
+    }
+    const [x1,y1,x2,y2]=displayBox ?? guideBox;
+    const isGuide=!track || (track.misses && !track.template);
+    const material=isGuide ? null : track.detection.material;
+    pen.lineWidth=Math.max(2,overlay.width/320);
+    pen.strokeStyle=material?'#157e75':'#d78c14';
+    pen.setLineDash(isGuide?[pen.lineWidth*4,pen.lineWidth*3]:[]);
+    pen.strokeRect(x1*overlay.width,y1*overlay.height,(x2-x1)*overlay.width,(y2-y1)*overlay.height);
+    pen.setLineDash([]);
+    if(material) {
+      pen.font=`600 ${Math.max(18,overlay.width/38)}px Segoe UI`;pen.fillStyle=pen.strokeStyle;
+      pen.fillText(material.label,Math.max(4,x1*overlay.width),Math.max(24,y1*overlay.height-8));
+    }
+    if(canSend){
+      const scale=Math.min(1,640/Math.max(video.videoWidth,video.videoHeight));
+      capture.width=Math.round(video.videoWidth*scale);capture.height=Math.round(video.videoHeight*scale);
+      capturePen.drawImage(video,0,0,capture.width,capture.height);
+      const image=capture.toDataURL('image/jpeg',.90).split(',')[1];
+      const frame=motionFrame();
+      pending={sequence:++sequence,sent:now,frame,frames:[]};lastSent=now;
+      send({event:'frame',stream_id:streamId,sequence,image});
+    }
+    if(pending&&now-pending.sent>12000){clearTrack();notice('La conexión está tardando. Detén y vuelve a activar la cámara.',true);}
+  }
+  requestAnimationFrame(tick);
+}
+window.addEventListener('message',event=>{
+  if(event.source!==window.parent||event.data?.type!=='streamlit:render')return;
+  const args=event.data.args||{};enabled=!event.data.disabled;interval=Math.max(200,args.interval_ms||250);
+  if(Array.isArray(args.guide) && args.guide.length===4)guideBox=args.guide;
+  const reply=args.response;
+  if(reply&&reply.stream_id===streamId&&pending&&reply.sequence===pending.sequence){
+    const request=pending;
+    pending=null;
+    if(reply.error){clearTrack();notice(reply.error,true);}
+    else{applyDetection(reply.detection,request,performance.now());notice('');}
+    showMaterial();
+  }
+  buttons();resize();
+});
+$('start').addEventListener('click',start);$('stop').addEventListener('click',()=>stop());
+$('device').addEventListener('change',async()=>{if(media){stop();await start();}});
+window.addEventListener('pagehide',()=>stop(false));window.addEventListener('beforeunload',()=>stop(false));
+new ResizeObserver(resize).observe(document.body);
+devices().catch(()=>{});post('streamlit:componentReady',{apiVersion:1});resize();requestAnimationFrame(tick);
+</script></body></html>

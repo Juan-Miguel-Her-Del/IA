@@ -1,0 +1,22 @@
+{
+  "experiment": "C1b",
+  "data_experiment": "B",
+  "architecture": "VisionResidual-v2",
+  "image_size": 192,
+  "preprocessing": "letterbox-v2",
+  "initialization": "random_from_scratch",
+  "dataset_dir": "data/experiments/B/processed",
+  "epochs": 70,
+  "batch_size": 64,
+  "learning_rate": 0.0015,
+  "weight_decay": 0.0005,
+  "label_smoothing": 0.05,
+  "balanced_loss": true,
+  "warmup_epochs": 3,
+  "patience": 18,
+  "seed": 42,
+  "num_workers": 2,
+  "dropout": 0.25,
+  "normalization": {"mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
+  "augmentation": {"rotation_degrees": 20, "brightness": 0.25, "contrast": 0.25, "color": 0.25, "min_scale": 0.8, "working_scale": 1.25}
+}

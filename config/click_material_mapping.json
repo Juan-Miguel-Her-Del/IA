@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "purpose": "Organización para revisión; no aprobación de entrenamiento",
+  "annotation_origin": "SAM 3 proposals followed by human review, according to the dataset author",
+  "approved_for_training": false,
+  "classes": {
+    "Bottle Cap": {"material": null, "allowed_materials": ["plastico", "metal"], "assignment": "per_object_human_review", "reason": "Tapa plástica a plastico y tapa metálica a metal, tras confirmar el material de cada objeto."},
+    "Cardboard": {"material": "carton", "reason": "La etiqueta de origen especifica cartón."},
+    "Crumbled Paper": {"material": "papel", "reason": "La etiqueta de origen especifica papel."},
+    "Match Box": {"material": null, "reason": "Revisar material del objeto completo y posibles componentes."},
+    "Metal Can": {"material": "metal", "reason": "La etiqueta de origen especifica una lata metálica."},
+    "Others": {"material": null, "allowed_materials": ["plastico", "papel", "carton", "vidrio", "metal", "organicos"], "assignment": "per_object_human_review", "reason": "Asignar por revisión humana a una de las seis categorías; excluir si no es identificable o no corresponde."},
+    "Paper Cup": {"material": null, "reason": "Revisar papel, recubrimientos y posibles materiales compuestos."},
+    "Paper Pack": {"material": null, "reason": "Revisar papel, cartón o envase multicapa."},
+    "Plastic Bag": {"material": "plastico", "reason": "La etiqueta de origen especifica plástico."},
+    "Plastic Bottle": {"material": "plastico", "reason": "La etiqueta de origen especifica plástico."},
+    "Plastic Packet": {"material": "plastico", "reason": "Agrupación según la etiqueta plástica de origen; no certifica composición ni reciclabilidad."},
+    "Silver Foil": {"material": null, "reason": "Confirmar lámina metálica frente a envoltorio plástico metalizado."},
+    "Slippers": {"material": null, "reason": "Puede contener caucho, plástico y otros componentes."}
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "architecture": "VisionLocaliza-D2",
+  "pretrained": false,
+  "seed": 47,
+  "image_size": 512,
+  "batch_size": 16,
+  "epochs": 12,
+  "patience": 8,
+  "learning_rate": 7.5e-05,
+  "weight_decay": 0.0001,
+  "workers": 2,
+  "native_amp": false,
+  "validation_every": 2,
+  "horizontal_flip": 0.5,
+  "scale_range": [
+    0.75,
+    1.0
+  ],
+  "brightness": 0.2,
+  "contrast": 0.2,
+  "object_crop_probability": 0.6,
+  "background_crop_probability": 0.1,
+  "focus_categories": [
+    "MJU waste",
+    "Clear plastic bottle",
+    "Other plastic bottle",
+    "Glass bottle",
+    "Drink can",
+    "Food Can",
+    "Other carton",
+    "Corrugated carton"
+  ],
+  "MJU_sampling_weight": 1.0,
+  "max_TACO_AP95_drop": 0.003,
+  "selection": "whole-object quality and weighted validation scene AP95, TACO/MJU guards; preserve photo behavior",
+  "test_used": false,
+  "extent_edge_weight": 1.0,
+  "extent_missing_weight": 1.0,
+  "extent_GIoU_weight": 0.5,
+  "negative_quality_weight": 0.0,
+  "TACO_minimum_AP95": 0.1575,
+  "candidate_quality_weight": 0.2,
+  "interior_texture_probability": 0.35,
+  "texture_categories": [
+    "Clear plastic bottle",
+    "Other plastic bottle",
+    "Glass bottle",
+    "Drink carton",
+    "Other carton",
+    "Corrugated carton",
+    "Meal carton",
+    "MJU waste"
+  ],
+  "category_sampling_weights": {
+    "Clear plastic bottle": 4.0,
+    "Other plastic bottle": 3.0,
+    "Glass bottle": 2.0,
+    "Drink carton": 3.0,
+    "Other carton": 2.0,
+    "Corrugated carton": 2.0
+  },
+  "MJU_minimum_AP95": 0.085,
+  "validation_groups": {
+    "ClearBottleScenes": [
+      "Clear plastic bottle",
+      "Other plastic bottle"
+    ],
+    "PackagingScenes": [
+      "Drink carton",
+      "Other carton",
+      "Meal carton",
+      "Corrugated carton"
+    ]
+  },
+  "selection_weights": {
+    "TACO": 0.35,
+    "MJU": 0.15,
+    "ClearBottleScenes": 0.3,
+    "PackagingScenes": 0.2
+  },
+  "train_box_quality_only": true
+}

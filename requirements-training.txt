@@ -1,0 +1,5 @@
+# Solo entrenamiento/evaluacion; no instala interfaz ni captura de camara.
+-r requirements-data.txt
+torch>=2.5,<3
+scikit-learn>=1.5,<2
+matplotlib>=3.9,<4

@@ -1,0 +1,5 @@
+# Instala primero la edición de torch para tu GPU o para CPU.
+-r requirements-detector.txt
+-r requirements-training.txt
+# Esta versión produjo los JPEG de los manifiestos históricos.
+Pillow==12.3.0

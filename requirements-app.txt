@@ -1,0 +1,7 @@
+# Aplicacion local y servidor: OpenCV sin dependencias de ventanas graficas.
+--extra-index-url https://download.pytorch.org/whl/cpu
+-r requirements-data.txt
+torch>=2.5,<3
+opencv-python-headless>=4.10,<5
+streamlit>=1.49,<2
+pyarrow>=17,<30

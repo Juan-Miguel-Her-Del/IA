@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "selected_experiment": "B",
+  "drive_relative_root": "Vision-IA",
+  "local_shared_dir": null,
+  "training_overrides": {},
+  "note": "Configurar la ruta real con scripts.configure_sync; no se presupone una unidad de Drive."
+}

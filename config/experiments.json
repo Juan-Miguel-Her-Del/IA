@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "active_experiment": "A",
+  "seed": 42,
+  "ratios": {"train": 0.7, "val": 0.15, "test": 0.15},
+  "visual_audit": {"phash_distance": 6, "dhash_distance": 10, "orientations": 8},
+  "realwaste": {
+    "uci_url": "https://archive.ics.uci.edu/static/public/908/realwaste.zip",
+    "authors_repository": "sam-single/realwaste",
+    "authors_revision": "156e8e9154eeb163df30fcfd767f55b19633bb06",
+    "categories": {
+      "Food Organics": {"class": "organicos", "expected_images": 411},
+      "Cardboard": {"class": "carton", "expected_images": 461},
+      "Glass": {"class": "vidrio", "expected_images": 420},
+      "Metal": {"class": "metal", "expected_images": 790},
+      "Paper": {"class": "papel", "expected_images": 500},
+      "Plastic": {"class": "plastico", "expected_images": 921}
+    }
+  },
+  "experiments": {
+    "A": {"description": "TrashNet + Food Organics de RealWaste", "realwaste_categories": ["Food Organics"]},
+    "B": {"description": "TrashNet + seis categorias de RealWaste", "realwaste_categories": ["Food Organics", "Cardboard", "Glass", "Metal", "Paper", "Plastic"]}
+  }
+}

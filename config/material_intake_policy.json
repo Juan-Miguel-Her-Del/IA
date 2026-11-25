@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "require_human_boxes_for_materials": [
+    "papel"
+  ],
+  "reason": "El usuario excluyó el papel actual de la colección organizada y aportará imágenes con etiquetas y cajas humanas.",
+  "scope": "Selección de datos nuevos; conservar fuentes originales, manifiestos históricos y modelos.",
+  "request_date_local": "2026-11-25",
+  "partition_policy": "preserve_source_splits",
+  "test_copy_purpose": "almacenamiento; evaluación final",
+  "paper_pending_user_import": false,
+  "reports_enabled": false,
+  "confirmed_human_annotation_materials": [
+    "papel",
+    "carton",
+    "vidrio",
+    "metal",
+    "organicos"
+  ],
+  "pending_materials": [],
+  "dataset_root": "C:\\Users\\JUAN M\\Downloads\\DATOS_SEPARADOS_6_CATEGORIAS_20261124_v1",
+  "dataset_layout": "material/train|val|test: imagenes y _annotations.coco.json",
+  "incompatible_and_image_only_copies_removed": false,
+  "preserve_historical_test_partitions": true,
+  "plastic_original_data_restored": true,
+  "do_not_remove_material_without_explicit_request": true,
+  "preserve_existing_user_data_during_cleanup": true,
+  "organic_target_definition": {
+    "include": [
+      "cascaras desechadas",
+      "otros restos de comida"
+    ],
+    "exclude": [
+      "frutas enteras"
+    ]
+  },
+  "organic_target_definition_confirmed": true,
+  "organic_unboxed_policy": "Las im?genes de org?nicos sin cajas se retiraron por solicitud expl?cita del usuario; las restantes tienen cajas.",
+  "organic_class_mapping": "Interpretar category_id mediante categories.name; no asumir que el ID local coincide entre archivos.",
+  "organic_unboxed_images_removed_by_user_request": true,
+  "annotation_source_exceptions": [
+    {
+      "source": "CLICK",
+      "annotation_origin": "SAM3 proposals followed by human review",
+      "allowed_for_current_training": true,
+      "authorized_by": "explicit user instruction in this conversation",
+      "scope": "Existing annotations in the current dataset; retain their true provenance."
+    }
+  ],
+  "external_pretrained_architectures_allowed": false,
+  "external_pretrained_weights_allowed": false,
+  "training_preparation": {
+    "status": "hybrid_activated",
+    "auto_start": false,
+    "training_started": true,
+    "device": "local_nvidia_cuda",
+    "dataset_usage": "current_dataset_only",
+    "primary_material_confusion": [
+      "vidrio",
+      "plastico"
+    ],
+    "classifier_architecture": "VisionHybrid-v1",
+    "classifier_initialization": "random_from_scratch",
+    "more_convolution_layers": "controlled_variant_if_validation_indicates_insufficient_capacity; professor wording not confirmed",
+    "detector_architecture": "own_VisionLocaliza_D2",
+    "phases": [
+      "validate_partitions_labels_boxes_and_overlap",
+      "short_gpu_and_memory_check",
+      "train_material_classifier",
+      "train_or_refine_own_detector",
+      "compare_validation_errors_by_class",
+      "final_test_after_model_selection"
+    ],
+    "image_only_plastic_samples": "classification_only; never treat missing boxes as verified negatives",
+    "other_unboxed_images": "human verification required before using as detection negatives",
+    "data_loading": "batches; avoid loading all decoded images into RAM",
+    "validation_split": "val",
+    "test_usage": "reserved_for_final_evaluation",
+    "preserve_current_and_historical_test": true,
+    "preserve_active_models": true,
+    "training_artifacts_outside_dataset": true,
+    "dataset_reports_enabled": false,
+    "automatic_dataset_deletion": false,
+    "comparison_architecture": "VisionResidual-v2",
+    "classifier_config": "config/train_intake_hybrid.json",
+    "comparison_config": "config/train_intake_cnn.json",
+    "training_entrypoint": "scripts.train_intake_classifier",
+    "hybrid_type": "own_CNN_plus_transformer",
+    "hybrid_parameters": 514190,
+    "cnn_reference_parameters": 606210,
+    "transformer_layers": 3,
+    "attention_heads": 4,
+    "spatial_tokens_at_160px": 100,
+    "group_reservation": "test metadata source families reserved from train/val; val source families reserved from train; no files moved or deleted",
+    "weight_files_only_outside_dataset": true,
+    "active_run_dir": "C:\\Users\\JUAN M\\OneDrive\\Desktop\\IA muelsa\\Vision-IA\\runs\\intake_pair_20261125_173206Z",
+    "controller_pid": null,
+    "active_child_pid": null,
+    "started_utc": "2026-11-25T17:32:11.452058+00:00",
+    "completed_models": [
+      {
+        "model": "cnn",
+        "output": "C:\\Users\\JUAN M\\OneDrive\\Desktop\\IA muelsa\\Vision-IA\\runs\\intake_pair_20261125_173206Z\\cnn"
+      },
+      {
+        "model": "hybrid",
+        "output": "C:\\Users\\JUAN M\\OneDrive\\Desktop\\IA muelsa\\Vision-IA\\runs\\intake_pair_20261125_173206Z\\hybrid"
+      }
+    ],
+    "last_error": null,
+    "current_model": null,
+    "active_output": null,
+    "finished_utc": "2026-11-25T19:13:32.981420+00:00",
+    "test_still_reserved": false,
+    "detector_run_dir": "runs/intake_pair_20261125_173206Z/detector",
+    "classifier_selection_complete": true,
+    "selected_classifier_cnn_weight": 0.0,
+    "selected_classifier": "VisionHybrid-v1",
+    "independent_cnn_in_runtime": false,
+    "detector_training_complete": true,
+    "detector_best_epoch": 16,
+    "final_test_complete": true,
+    "active_classifier": "VisionHybrid-v1",
+    "camera_validation_deferred_by_user": true,
+    "camera_accuracy_validated": false
+  }
+}

@@ -1,0 +1,4 @@
+# Dependencias para preparar y auditar datos en la fase 1.5.
+Pillow>=10.4,<13
+# Auditoria visual clasica mediante DCT; no usa modelos.
+numpy>=1.26,<3

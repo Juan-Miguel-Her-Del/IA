@@ -1,0 +1,22 @@
+{
+  "checkpoint": "models/runtime/classifier_hybrid_intake.pth",
+  "cpu_threads": 2,
+  "low_confidence_threshold": 0.65,
+  "localization_mode": "neural",
+  "detector_checkpoint": "models/runtime/detector_intake_D2.pth",
+  "detection_threshold": 0.27,
+  "detection_views": [],
+  "manual_bounds": [
+    0.2,
+    0.2,
+    0.8,
+    0.8
+  ],
+  "inference_interval_seconds": 0.1,
+  "camera_index": 0,
+  "max_upload_mb": 10,
+  "max_image_pixels": 16000000,
+  "detection_nms_iou": 0.45,
+  "material_candidate_checkpoint": null,
+  "material_candidate_weight": null
+}

@@ -1,0 +1,45 @@
+# Datos, informes generados y temporales
+data/**
+!data/**/
+!data/**/.gitkeep
+!data/README.md
+.vision-ia-split-*/
+runs/
+exports/
+config/sync.local.json
+# Pesos y checkpoints (ningun modelo se crea en fase 1)
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+*.safetensors
+*.onnx
+models/**
+!models/.gitkeep
+!models/README.md
+# Only our selected runtime checkpoints are published with the application.
+!models/runtime/
+!models/runtime/classifier_B.pth
+!models/runtime/classifier_materials.pth
+!models/runtime/classifier_scene.pth
+!models/runtime/detector_D2.pth
+!models/runtime/classifier_hybrid_intake.pth
+!models/runtime/detector_intake_D2.pth
+!models/runtime/manifest.json
+!models/runtime/reserved_hashes.json
+# Entornos y Python
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+# Editor y sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.env
+.env.*

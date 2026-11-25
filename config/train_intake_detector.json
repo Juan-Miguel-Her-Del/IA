@@ -1,0 +1,45 @@
+{
+  "architecture": "VisionLocaliza-D2",
+  "initialization": "continue_own_random_D2",
+  "dataset_dir": "C:/Users/JUAN M/Downloads/DATOS_SEPARADOS_6_CATEGORIAS_20261124_v1",
+  "image_size": 512,
+  "preprocessing": "letterbox-v2",
+  "normalization": {
+    "mean": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "std": [
+      0.5,
+      0.5,
+      0.5
+    ]
+  },
+  "seed": 72,
+  "epochs": 16,
+  "batch_size": 12,
+  "learning_rate": 0.0001,
+  "weight_decay": 0.0001,
+  "early_stopping_patience": 5,
+  "minimum_epochs": 4,
+  "num_workers": 0,
+  "gradient_clip": 5.0,
+  "cache_max_bytes": 67108864,
+  "crop_margin": 0.12,
+  "protect_historical_test": true,
+  "historical_test_reference": "data/reference/B/manifest.csv",
+  "test_used": false,
+  "horizontal_flip": 0.5,
+  "scale_range": [
+    0.8,
+    1.0
+  ],
+  "brightness": 0.15,
+  "contrast": 0.15,
+  "extent_edge_weight": 1.0,
+  "extent_missing_weight": 0.5,
+  "extent_GIoU_weight": 0.5,
+  "negative_quality_weight": 0.0,
+  "candidate_quality_weight": 0.0
+}

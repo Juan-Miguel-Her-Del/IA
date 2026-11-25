@@ -1,0 +1,3 @@
+# Runtime del despliegue. Entrenamiento: requirements-training/detector.txt.
+# Runtime con guía continua y recuperación de propuestas débiles en cámara.
+-r requirements-app.txt

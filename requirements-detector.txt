@@ -1,0 +1,6 @@
+# Arquitectura y utilidades; no contiene ni descarga pesos entrenados.
+-r requirements-app.txt
+requests>=2.32,<3
+ImageHash==4.3.2
+PyYAML>=6,<7
+pycocotools>=2.0.10,<3

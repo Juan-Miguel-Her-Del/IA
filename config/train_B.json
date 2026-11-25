@@ -1,0 +1,17 @@
+{
+  "experiment": "B",
+  "dataset_dir": "data/experiments/B/processed",
+  "output_dir": "runs/B",
+  "image_size": 128,
+  "epochs": 30,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "seed": 42,
+  "num_workers": 2,
+  "device": "auto",
+  "dropout": 0.3,
+  "initialization": "random_from_scratch",
+  "early_stopping": {"patience": 6, "min_delta": 0.001},
+  "normalization": {"mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
+  "augmentation": {"horizontal_flip_probability": 0.5, "rotation_degrees": 10, "brightness": 0.1, "contrast": 0.1}
+}
